@@ -3,7 +3,6 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <RTClib.h>
- //#include <VirtualWire.h>
 
 #define batt_in 34
 #define rx_pin 2
@@ -48,10 +47,6 @@ void setup() {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
     if (!bmp.begin(0x76)) Serial.println("Couldn't find BMP");
-
-    pinMode(rx_pin, INPUT);
-    //vw_set_rx_pin(rx_pin);
-    //vw_setup(3000);
     /*------------------------------------------------------------------*/
 }
 
@@ -62,16 +57,16 @@ void readBattery() {
     for (byte x = 0; x < nReadings; x++)
         voltage_reading += analogRead(batt_in);
 
-    /** 5.1 maximum USB voltage
+    /** 5.1 maximum voltage to measure (USB)
      * r1 (to device) 1Mohm --- r2 (to gnd) 1Mohm
      * In case of not equal resistors the read value 
-     * is scaled down by a factor of  r1/(r1+r2)
+     * is scaled down by a factor of  r2/(r1+r2)
      * so multiply per 1/attenuation (now 2)
-     * Sperimental offset in reading of 0.505V
+     * Sperimental offset in reading of 0.525V
      */
-    voltage = ((voltage_reading / 64) * 3.3 / 4095 * 2) + 0.505;
+    voltage = ((voltage_reading / nReadings) * 3.3 / 4095 * 2) + 0.52;
 
-    /** Map looks to not work   vPercent = map(voltage, 3.1 , 4.20, 0, 100);
+    /** Map seems to not work   vPercent = map(voltage, 3.1 , 4.20, 0, 100);
      * Minimum voltage 3.1V (as 0%)
      * Maximum voltage 4.2V (100%)
      * Percent value can rise up to 100% while charging
@@ -100,23 +95,11 @@ void ambientMeasurement() {
 }
 
 
-/*void getExternalRF(){
-  uint8_t buf[VW_MAX_MESSAGE_LEN];
-  uint8_t buflen = VW_MAX_MESSAGE_LEN;
-  if (vw_get_message(buf, &buflen)) // Non-blocking
-  {
-    buf[buflen]='\0'; // Metto il terminatore di stringa
-          if (strncmp((char *)buf,"LED_ON",buflen)==0)
-              digitalWrite(LED_pin, HIGH); // Accendo il LED
-          else if (strncmp((char *)buf,"LED_OFF",buflen)==0)
-              digitalWrite(LED_pin,LOW); // Spengo il LED
-      }
-}*/
-
-
 void printToSerial() {
     /*--------------------------------------------------------------------------------*/
-    Serial.print("Voltage: " + (String) voltage + "V");
+    Serial.print("Voltage: ");
+    Serial.print(voltage, 3);
+    Serial.print("V");
     Serial.println("\t" + (String) vPercent + "%");
     /*--------------------------------------------------------------------------------*/
     Serial.println("Temperature: " + (String) temp + " °C");
@@ -132,8 +115,7 @@ void loop() {
     readBattery();
     getTime();
     ambientMeasurement();
-    //getExternalRF();
-	Serial.println("VALORE: "+(String) analogRead(batt_in));
+
     printToSerial();
     delay(2500);
 }
