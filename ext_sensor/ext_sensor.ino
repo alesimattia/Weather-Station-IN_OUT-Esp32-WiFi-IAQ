@@ -4,10 +4,17 @@
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
 
+#include <ESP8266WiFi.h>
+#include <ESPAsyncWebServer.h>
+
 #define batt_in A0
 
 Adafruit_BMP280 bmp;
 Adafruit_BME680 bme;
+
+const char* ssid = "ESP-sensor";
+const char* password = "myesp8266";
+AsyncWebServer server(80);
 
 float voltage_ext;
 int vPercent_ext;
@@ -20,13 +27,44 @@ float airIndex;
 void setup() {
     Serial.begin(115200);
     Wire.begin(12,13); //I2C start
+    
+    pinMode(batt_in, INPUT);
 
     pinMode(15,OUTPUT); //sensor GND
     digitalWrite(15,LOW);
-
     if (! bmp.begin(0x76)) Serial.println("Couldn't find BMP");
 
-    pinMode(batt_in, INPUT);
+
+    /*-------------------  WIFI web server -------------------*/
+    WiFi.softAP(ssid, password);
+    IPAddress IP = WiFi.softAPIP();
+    Serial.print("AP IP address: ");
+    Serial.println(IP);
+
+    /*------------------ HTTP requests -----------------------*/
+    server.on("/voltage", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send_P(200, "text/plain",  readBattery().c_str() );
+    } );
+    server.on("/temp", HTTP_GET, [](AsyncWebServerRequest *request){
+        String ris = (String)(bmp.readTemperature() - 1.389);   //BME self heating
+        request->send_P(200, "text/plain", ris.c_str() );
+    } );
+    server.on("/pres", HTTP_GET, [](AsyncWebServerRequest *request){
+        String ris = (String)bmp.readPressure();
+        request->send_P(200, "text/plain", ris.c_str() );
+    } );
+    
+    /*server.on("/hum", HTTP_GET, [](AsyncWebServerRequest *request){
+        char ris = (char)  bme.readHumidity();
+        request->send_P(200, "text/plain", &ris );
+    } );
+    server.on("/quality", HTTP_GET, [](AsyncWebServerRequest *request){
+        char ris = (char)  bme.readGas();
+        request->send_P(200, "text/plain", &ris );
+    } );*/
+
+    server.begin();
+    /*--------------------------------------------------------*/
 }
 
 
@@ -37,7 +75,7 @@ void ambientMeasurement() {
 }
 
 
-void readBattery() {
+String readBattery() {
     const byte nReadings = 64;
     float voltage_reading = 0;
 
@@ -54,16 +92,7 @@ void readBattery() {
      */
     const float offset = 4.662177;
     voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 * offset;
-
-    /** Map seems to not work   vPercent = map(voltage, 3.1 , 4.20, 0, 100);
-     * Minimum voltage 3.1V (as 0%)
-     * Maximum voltage 4.2V (100%)
-     * Percent value can rise up to 100% while charging
-     * That's the desired behaviour to detect the "charging rate"
-     */
-    if (voltage_ext >= 3.1)					  //4.2-3.1
-         vPercent_ext = (voltage_ext - 3.1) * 100 / 1.1;
-    else vPercent_ext = 0;
+    return (String) voltage_ext;
 }
 
 
@@ -76,6 +105,8 @@ void printToSerial() {
     /*--------------------------------------------------------------------------------*/
     Serial.println("Temperature: " + (String) temp_ext + " °C");
     Serial.println("Pressure: " + (String) pressure_ext + " hPa");
+    Serial.println("Humidity: " + (String) humidity_ext + " %RH");
+    Serial.println("Air Quality: " + (String) airIndex + " tVOC");
     Serial.println();
     Serial.println("----------------------------------------");
     /*--------------------------------------------------------------------------------*/
