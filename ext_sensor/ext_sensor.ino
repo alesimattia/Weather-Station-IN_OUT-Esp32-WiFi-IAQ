@@ -1,16 +1,18 @@
 #include <Adafruit_BMP280.h>
 
-#include <Adafruit_BME680.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
 
 #include <ESP8266WiFi.h>
 #include <ESPAsyncWebServer.h>
 
+#define uS_TO_S_FACTOR 1000000ULL 
+#define TIME_TO_SLEEP  5
+#define TIME_TO_ANSWER_HTTP 10
+
 #define batt_in A0
 
 Adafruit_BMP280 bmp;
-Adafruit_BME680 bme;
 
 const char* ssid = "ESP-sensor";
 const char* password = "myesp8266";
@@ -30,36 +32,48 @@ void setup() {
     
     pinMode(batt_in, INPUT);
 
-    pinMode(15,OUTPUT); //sensor GND
+    /*---------------------- bmp280 Sensor -------------------------*/
+    pinMode(15,OUTPUT);     //GND
     digitalWrite(15,LOW);
-    if (! bmp.begin(0x76)) Serial.println("Couldn't find BMP");
+    
+    if (! bmp.begin(0x76)) Serial.println("Couldn't find bmp");
+    //Weather - Climate Monitor calibration
+    bmp.setSampling(Adafruit_BMP280::MODE_FORCED, 
+                    Adafruit_BMP280::SAMPLING_X1, // temperature 
+                    Adafruit_BMP280::SAMPLING_X1, // pressure
+                    Adafruit_BMP280::FILTER_OFF ); 
 
-
-    /*-------------------  WIFI web server -------------------*/
+    /*-------------------  WIFI async web server -------------------*/
     WiFi.softAP(ssid, password);
     IPAddress IP = WiFi.softAPIP();
-    Serial.print("AP IP address: ");
-    Serial.println(IP);
 
-    /*------------------ HTTP requests -----------------------*/
+    /*-------------------- HTTP requests ---------------------------*/
     server.on("/voltage", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send_P(200, "text/plain",  readBattery().c_str() );
+        char temp[6];
+        dtostrf(readBattery(), 2, 4, temp);
+        request->send_P(200, "text/plain",  temp );
+
+        sleep();
     } );
     server.on("/temp", HTTP_GET, [](AsyncWebServerRequest *request){
-        String ris = (String)(bmp.readTemperature() - 1.389);   //BME self heating
+        String ris = String( bmp.readTemperature() );
         request->send_P(200, "text/plain", ris.c_str() );
+
+        sleep();
     } );
     server.on("/pres", HTTP_GET, [](AsyncWebServerRequest *request){
-        String ris = (String)bmp.readPressure();
+        String ris = String( bmp.readPressure() / 100 );  //hPA
         request->send_P(200, "text/plain", ris.c_str() );
+
+        sleep();
     } );
     
     /*server.on("/hum", HTTP_GET, [](AsyncWebServerRequest *request){
-        char ris = (char)  bme.readHumidity();
+        char ris = (char)  bmp.readHumidity();
         request->send_P(200, "text/plain", &ris );
     } );
     server.on("/quality", HTTP_GET, [](AsyncWebServerRequest *request){
-        char ris = (char)  bme.readGas();
+        char ris = (char)  bmp.readGas();
         request->send_P(200, "text/plain", &ris );
     } );*/
 
@@ -71,11 +85,11 @@ void setup() {
 void ambientMeasurement() {
     temp_ext = bmp.readTemperature();
     pressure_ext = bmp.readPressure() / 100;
-    //humidity_ext = bme.readHumidity();
+    //humidity_ext = bmp.readHumidity();
 }
 
 
-String readBattery() {
+float readBattery() {
     const byte nReadings = 64;
     float voltage_reading = 0;
 
@@ -91,8 +105,8 @@ String readBattery() {
      * SPERIMENTAL VOLTAGE OFFSET of 4.662...
      */
     const float offset = 4.662177;
-    voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 * offset;
-    return (String) voltage_ext;
+    voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 * offset + 0.02;
+    return voltage_ext;
 }
 
 
@@ -113,10 +127,21 @@ void printToSerial() {
 }
 
 
+void sleep(){
+    /** A delay will let the ESP to stay on for the time 
+     * to being reacheable to the weather-station via WIFI 
+     * and get the data from ext_sensor device --> then sleep
+    **/ 
+    delay(TIME_TO_ANSWER_HTTP);
+    system_deep_sleep_set_option(0);
+    ESP.deepSleep(TIME_TO_SLEEP * uS_TO_S_FACTOR); // wake up the module every 5 seconds
+}
+
+
 void loop() {
-    readBattery();
+    /*readBattery();
     ambientMeasurement();
 
     printToSerial();
-    delay(2500);
+    delay(3000);*/
 }
