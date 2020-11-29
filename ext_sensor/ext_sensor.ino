@@ -2,15 +2,13 @@
 
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
-
 #include <ESP8266WiFi.h>
 #include <ESPAsyncWebServer.h>
 
-#define uS_TO_S_FACTOR 1000000ULL 
-#define TIME_TO_SLEEP  5
-#define TIME_TO_ANSWER_HTTP 10
-
+#define TIME_TO_SLEEP  4
+#define TIME_TO_LISTEN_HTTP 30
 #define batt_in A0
+
 
 Adafruit_BMP280 bmp;
 
@@ -29,14 +27,15 @@ float airIndex;
 void setup() {
     Serial.begin(115200);
     Wire.begin(12,13); //I2C start
-    
+    system_deep_sleep_set_option(0);
+
     pinMode(batt_in, INPUT);
 
     /*---------------------- bmp280 Sensor -------------------------*/
     pinMode(15,OUTPUT);     //GND
     digitalWrite(15,LOW);
     
-    if (! bmp.begin(0x76)) Serial.println("Couldn't find bmp");
+    if (! bmp.begin(0x76))  Serial.println("Couldn't find bmp");
     //Weather - Climate Monitor calibration
     bmp.setSampling(Adafruit_BMP280::MODE_FORCED, 
                     Adafruit_BMP280::SAMPLING_X1, // temperature 
@@ -46,26 +45,20 @@ void setup() {
     /*-------------------  WIFI async web server -------------------*/
     WiFi.softAP(ssid, password);
     IPAddress IP = WiFi.softAPIP();
-
+    //IPAddress local_IP(192, 168, 4, 1);
     /*-------------------- HTTP requests ---------------------------*/
     server.on("/voltage", HTTP_GET, [](AsyncWebServerRequest *request){
         char temp[6];
         dtostrf(readBattery(), 2, 4, temp);
         request->send_P(200, "text/plain",  temp );
-
-        sleep();
     } );
     server.on("/temp", HTTP_GET, [](AsyncWebServerRequest *request){
         String ris = String( bmp.readTemperature() );
         request->send_P(200, "text/plain", ris.c_str() );
-
-        sleep();
     } );
     server.on("/pres", HTTP_GET, [](AsyncWebServerRequest *request){
         String ris = String( bmp.readPressure() / 100 );  //hPA
         request->send_P(200, "text/plain", ris.c_str() );
-
-        sleep();
     } );
     
     /*server.on("/hum", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -104,8 +97,8 @@ float readBattery() {
      * SEEMS NOT TO FOLLOW A LOGIC IN THE VOLTAGE DIVIDER -->
      * SPERIMENTAL VOLTAGE OFFSET of 4.662...
      */
-    const float offset = 4.662177;
-    voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 * offset + 0.02;
+    const float offset = 3.44;
+    voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 * offset;
     return voltage_ext;
 }
 
@@ -127,21 +120,11 @@ void printToSerial() {
 }
 
 
-void sleep(){
+void loop() {
     /** A delay will let the ESP to stay on for the time 
      * to being reacheable to the weather-station via WIFI 
      * and get the data from ext_sensor device --> then sleep
     **/ 
-    delay(TIME_TO_ANSWER_HTTP);
-    system_deep_sleep_set_option(0);
-    ESP.deepSleep(TIME_TO_SLEEP * uS_TO_S_FACTOR); // wake up the module every 5 seconds
-}
-
-
-void loop() {
-    /*readBattery();
-    ambientMeasurement();
-
-    printToSerial();
-    delay(3000);*/
+    delay(TIME_TO_LISTEN_HTTP * 1000);
+    ESP.deepSleep(TIME_TO_SLEEP * 1000000ULL, WAKE_RF_DEFAULT);
 }
