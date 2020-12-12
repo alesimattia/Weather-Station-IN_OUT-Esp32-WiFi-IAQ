@@ -1,9 +1,15 @@
 #include <Adafruit_BMP280.h>
+
 #include <Adafruit_BME680.h>
+
 #include <Wire.h>
+
 #include <Adafruit_Sensor.h>
+
 #include <RTClib.h>
+
 #include <WiFi.h>
+
 #include <HTTPClient.h>
 
 
@@ -17,15 +23,13 @@ Adafruit_BMP280 bmp;
 
 /*------------------ Variabili globali -------------------*/
 
-const char* ssid = "ESP-sensor";
-const char* password = "myesp8266";
-const char* extSensor_volt = "http://192.168.4.1/volt";
-const char* extSensor_temp = "http://192.168.4.1/temp";
-const char* extSensor_pres = "http://192.168.4.1/pres";
-const char* extSensor_hum = "http://192.168.4.1/hum";
-const char* extSensor_quality = "http://192.168.4.1/quality";
+const char * ssid = "ESP-sensor";
+const char * password = "esp8266sensor";
+static
+const int TIME_TO_NEXT_READ = 10000 + 100; //TIME_TO_SLEEP in "ext_sensor.ino"
 
-static const char daysOfTheWeek[7][12] = {
+static
+const char daysOfTheWeek[7][12] = {
     "Domenica",
     "Lunedì",
     "Martedì",
@@ -38,33 +42,23 @@ DateTime currentTime;
 
 float voltage;
 int vPercent;
-float voltage_ext = 0;
-int vPercent_ext = 0;
+float voltage_ext = NULL;
+int vPercent_ext = NULL;
 float temp;
-float temp_ext = 0;
+float temp_ext = NULL;
 float humidity;
-float humidity_ext = 0;
+float humidity_ext = NULL;
 float pressure;
-float pressure_ext = 0;
-float airIndex = 0;
+float pressure_ext = NULL;
+float airTVOC = NULL;
+String airQuality = "NULL";
 /*-------------------------------------------------------*/
-
 
 void setup() {
     Serial.begin(115200);
     Wire.begin(); //I2C start
 
     adcAttachPin(batt_in);
-
-    /*-------------------------- External sensor WIFI ----------------------*/
-    WiFi.begin(ssid, password);
-    Serial.print("Connecting: ");
-    while(WiFi.status() != WL_CONNECTED) { 
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.print("\n External sensor WIFI connected: ");
-    Serial.println(WiFi.localIP());
 
     /*--------------------- Sensor initializing ----------------------*/
     if (!rtc.begin()) Serial.println("Couldn't find RTC");
@@ -74,18 +68,18 @@ void setup() {
     /*------------------------------------------------------------------*/
 }
 
-
-int battPercentage(float v){
+int battPercentage(float v) {
     /** Map seems to not work   vPercent = map(voltage, 3.1 , 4.20, 0, 100);
      * Minimum voltage 3.1V (as 0%)
      * Maximum voltage 4.2V (100%)
      * Percent value can rise up to 100% while charging
      * That's the desired behaviour to detect the "charging rate"
      */
-    if (v >= 3.1)		        //4.2-3.1
+    if (v >= 3.1) //4.2-3.1
         return (v - 3.1) * 100 / 1.1;
     else return 0;
 }
+
 void readBattery() {
 
     const byte nReadings = 64;
@@ -118,32 +112,53 @@ void getTime() {
 
 
 void ambientMeasurement() {
-    temp = bmp.readTemperature() - 1.389;   //BME self heating;
+    temp = bmp.readTemperature() - 1.389; //BME self heating;
     pressure = bmp.readPressure() / 100;
 }
 
 
-String httpGETRequest(const char* serverName) {
-  HTTPClient http;
-  // Your IP address with path or Domain name with URL path 
-  http.begin(serverName);
-  // Send HTTP POST request
-  int httpResponseCode = http.GET();
-  
-  String payload = "--"; 
-  
-  if (httpResponseCode>0) {
-    Serial.print("HTTP Response code: ");
-    Serial.println(httpResponseCode);
-    payload = http.getString();
-  }
-  else {
-    Serial.print("Error code: ");
-    Serial.println(httpResponseCode);
-  }
-  
-  http.end();   // Free resources
-  return payload;
+String httpGETRequest(const char * serverName) {
+    HTTPClient http;
+    http.begin(serverName);
+
+    if (http.GET() > 0) //contains the ResponseCode
+        return http.getString();    //contains the Payload
+    else {
+        Serial.println("Bad request; code: " + http.GET());
+        return "";
+    }
+    http.end(); // Free resources
+}
+
+
+void getExtSensor() {
+    /*--------------------- Initialization -----------------*/
+    WiFi.begin(ssid, password);
+    Serial.print("Connecting: ");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.print("\n External sensor WIFI connected: ");
+    Serial.println(WiFi.localIP());
+    /*------------------------------------------------------*/
+
+    static
+    const String gateway = (String) WiFi.gatewayIP();
+    Serial.println("Gateway: " + gateway);
+
+    voltage_ext = httpGETRequest(("http://" + gateway + "/volt").c_str()).toFloat();
+    vPercent_ext = battPercentage(voltage_ext);
+    temp_ext = httpGETRequest(("http://" + gateway + "/temp").c_str()).toFloat();
+    humidity_ext = httpGETRequest(("http://" + gateway + "/hum").c_str()).toFloat();
+    pressure_ext = httpGETRequest(("http://" + gateway + "/press").c_str()).toFloat();
+    airTVOC = httpGETRequest(("http://" + gateway + "/air").c_str()).toFloat();
+
+    /**Doesn't repeat the connection attempt until the ext_sensor
+     * will be ready to answer the requests. 
+     * It goes in deepSleep mode after a cycle of requests (to implement)
+     * This is a syncronization constant => TIME_TO_SLEEP in the "ext_sensor.ino"
+     **/
 }
 
 
@@ -162,18 +177,17 @@ void printToSerial() {
     Serial.println("EXT_Temperature: " + (String) temp_ext + " °C");
     Serial.println("EXT_Pressure: " + (String) pressure_ext + " hPa");
     Serial.println("EXT_Humidity: " + (String) humidity_ext + " %RH");
-    Serial.println("Air Quality: " + (String) airIndex + " %RH");
+    Serial.println("Air Quality: " + (String) airTVOC + " %RH");
     Serial.println();
     Serial.println("----------------------------------------");
 }
-
 
 void loop() {
 
     readBattery();
     getTime();
     ambientMeasurement();
-    getExternalSensor();
+    getExtSensor();
 
     printToSerial();
     delay(2500);

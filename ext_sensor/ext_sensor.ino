@@ -6,8 +6,8 @@
 
 /** Weather-Station (receiver) must be aware 
  * of these for synchronization */
-#define TIME_TO_SLEEP  20
-#define TIME_TO_LISTEN_HTTP 40      
+#define TIME_TO_SLEEP  4200
+#define TIME_TO_LISTEN_HTTP 1      
 #define batt_in A0
 
 
@@ -60,7 +60,7 @@ void setup() {
         String ris = String( bmp.readTemperature() - 1.5 );  //ESP self heathing
         request->send_P(200, "text/plain", ris.c_str() );
     } );
-    server.on("/pres", HTTP_GET, [](AsyncWebServerRequest *request){
+    server.on("/press", HTTP_GET, [](AsyncWebServerRequest *request){
         String ris = String( bmp.readPressure() / 100 );  //hPA
         request->send_P(200, "text/plain", ris.c_str() );
     } );
@@ -109,13 +109,14 @@ float readBattery() {
     const float offset = 3.42;
     voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 * offset;
     return voltage_ext;
+    //My charging circuit: (Max-4.18V)(Min-3.1)
 }
 
 
 void printToSerial() {
     /*--------------------------------------------------------------------------------*/
     Serial.print("\nVoltage: ");
-    Serial.print(voltage_ext, 6);
+    Serial.print(voltage_ext, 4);
     Serial.print("V");
     Serial.println("\t" + (String) vPercent_ext + "%");
     /*--------------------------------------------------------------------------------*/
@@ -139,5 +140,5 @@ void loop() {
     printToSerial();
 
     delay(TIME_TO_LISTEN_HTTP * 1000);
-    ESP.deepSleep(TIME_TO_SLEEP * 1000000ULL, WAKE_RF_DEFAULT);
+    ESP.deepSleep(TIME_TO_SLEEP * 1E6, WAKE_RF_DEFAULT);
 }
