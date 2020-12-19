@@ -1,26 +1,23 @@
-#include <Adafruit_BMP280.h>
-
-#include <Adafruit_BME680.h>
-
 #include <Wire.h>
-
 #include <Adafruit_Sensor.h>
-
+#include <Adafruit_BMP280.h>
+#include <Adafruit_HDC1000.h>
 #include <RTClib.h>
 
-#include <WiFi.h>
+#include <TFT_eSPI.h>
+#include <User_Setup_Select.h>
+#include <User_Setup.h>
 
+#include <WiFi.h>
 #include <HTTPClient.h>
 
 
-#define batt_in 34
-#define rx_pin 2
+static const byte batt_in = 34;
 
 /*-------------------- Sensori ------------------*/
 RTC_DS3231 rtc;
-Adafruit_BME680 bme;
 Adafruit_BMP280 bmp;
-
+Adafruit_HDC1000 hdc;
 /*------------------ Variabili globali -------------------*/
 
 const char * ssid = "ESP-sensor";
@@ -28,8 +25,7 @@ const char * password = "esp8266sensor";
 static
 const int TIME_TO_NEXT_READ = 10000 + 100; //TIME_TO_SLEEP in "ext_sensor.ino"
 
-static
-const char daysOfTheWeek[7][12] = {
+static const char daysOfTheWeek[7][12] = {
     "Domenica",
     "Lunedì",
     "Martedì",
@@ -64,27 +60,36 @@ void setup() {
     if (!rtc.begin()) Serial.println("Couldn't find RTC");
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
-    if (!bmp.begin(0x76)) Serial.println("Couldn't find BMP");
+    if (!bmp.begin(0x76))   Serial.println("Couldn't find BMP");
+    /** Weather/Climate-monitor  Calibration */
+    bmp.setSampling(Adafruit_BMP280::MODE_FORCED, 
+                    Adafruit_BMP280::SAMPLING_X1, // temperature 
+                    Adafruit_BMP280::SAMPLING_X1, // pressure
+                    Adafruit_BMP280::FILTER_OFF ); 
+    
+    if(! hdc.begin())     Serial.println("Couldn't find HDC");
+
     /*------------------------------------------------------------------*/
 }
+
 
 int battPercentage(float v) {
     /** Map seems to not work   vPercent = map(voltage, 3.1 , 4.20, 0, 100);
      * Minimum voltage 3.1V (as 0%)
      * Maximum voltage 4.2V (100%)
-     * Percent value can rise up to 100% while charging
-     * That's the desired behaviour to detect the "charging rate"
      */
     if (v >= 3.1) //4.2-3.1
         return (v - 3.1) * 100 / 1.1;
     else return 0;
 }
 
+
 void readBattery() {
 
     const byte nReadings = 64;
     float voltage_reading = 0;
 
+    /** Multiple readings to get a stabilised value */
     for (byte x = 0; x < nReadings; x++)
         voltage_reading += analogRead(batt_in);
 
@@ -93,9 +98,9 @@ void readBattery() {
      * In case of not equal resistors the read value 
      * is scaled down by a factor of  r2/(r1+r2)
      * so multiply per 1/attenuation (now 2)
-     * Sperimental offset in reading of 0.525V
+     * Sperimental offset in reading of 0.52V
      */
-    voltage = ((voltage_reading / nReadings) * 3.3 / 4095 * 2) + 0.52;
+    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2 ) + 0.52;
     vPercent = battPercentage(voltage);
 }
 
@@ -106,14 +111,15 @@ void getTime() {
     Serial.print((String) currentTime.day() + "/" + (String) currentTime.month() + "/" + (String) currentTime.year() +
         "  " + (String) daysOfTheWeek[currentTime.dayOfTheWeek()] + "  " + (String) currentTime.hour() +
         ":" + (String) currentTime.minute() + ":" + (String) currentTime.second());
-    //Misura circa 1°C in eccesso
-    Serial.println("  RTC-Temp: " + (String)(rtc.getTemperature() - 1));
 }
 
 
 void ambientMeasurement() {
-    temp = bmp.readTemperature() - 1.389; //BME self heating;
-    pressure = bmp.readPressure() / 100;
+    bmp.MODE_FORCED;
+    temp = bmp.readTemperature() - 1.389; //BMP self heating;
+    pressure = bmp.readPressure() / 100;    //hPa
+    humidity = hdc.readHumidity();
+    bmp.MODE_SLEEP;
 }
 
 
@@ -143,8 +149,7 @@ void getExtSensor() {
     Serial.println(WiFi.localIP());
     /*------------------------------------------------------*/
 
-    static
-    const String gateway = (String) WiFi.gatewayIP();
+    static const String gateway = WiFi.gatewayIP().toString();
     Serial.println("Gateway: " + gateway);
 
     voltage_ext = httpGETRequest(("http://" + gateway + "/volt").c_str()).toFloat();
@@ -169,26 +174,29 @@ void printToSerial() {
     Serial.print("V");
     Serial.println("\t" + (String) vPercent + "%");
     /*--------------------------------------------------------------------------------*/
-    Serial.println("Temperature: " + (String) temp + " °C");
+    Serial.println("Temperature BMP: " + (String) temp + " °C");
+    Serial.println("Temperature HDC: " + (String) hdc.readTemperature() + " °C");
+    Serial.println("Temperature RTC: " + (String) (rtc.getTemperature() - 1) + " °C");  //About 1°C in excess
     Serial.println("Pressure: " + (String) pressure + " hPa");
-    //Serial.println("Humidity: " + (String) humidity + " %RH");
+    Serial.println("Humidity: " + (String) humidity + " %RH");
     Serial.println();
     /*--------------------------------------------------------------------------------*/
+    Serial.println("EXT_Voltage: " + (String) voltage_ext + " V\t" + (String) vPercent_ext + "%");
     Serial.println("EXT_Temperature: " + (String) temp_ext + " °C");
     Serial.println("EXT_Pressure: " + (String) pressure_ext + " hPa");
     Serial.println("EXT_Humidity: " + (String) humidity_ext + " %RH");
     Serial.println("Air Quality: " + (String) airTVOC + " %RH");
-    Serial.println();
-    Serial.println("----------------------------------------");
+    Serial.println("\n-----------------------------------------");
 }
+
 
 void loop() {
 
     readBattery();
     getTime();
     ambientMeasurement();
-    getExtSensor();
+    //getExtSensor();
 
     printToSerial();
-    delay(2500);
+    delay(4000);
 }

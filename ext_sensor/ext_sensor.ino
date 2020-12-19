@@ -1,21 +1,21 @@
-#include <Adafruit_BMP280.h>
-#include <Adafruit_Sensor.h>
 #include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME680.h>
 #include <ESP8266WiFi.h>
 #include <ESPAsyncWebServer.h>
 
 /** Weather-Station (receiver) must be aware 
  * of these for synchronization */
-#define TIME_TO_SLEEP  4200
-#define TIME_TO_LISTEN_HTTP 1      
-#define batt_in A0
+static const byte TIME_TO_SLEEP = 4200;
+static const byte TIME_TO_LISTEN_HTTP = 1;     
+static const String batt_in = "A0";
 
 
 const char* ssid = "ESP-sensor";
 const char* password = "esp8266sensor";
 AsyncWebServer server(80);
 
-Adafruit_BMP280 bmp;
+Adafruit_BME680 bme;
 
 float voltage_ext;
 int vPercent_ext;
@@ -35,15 +35,15 @@ void setup() {
     pinMode(batt_in, INPUT);
 
 
-    /*----------------------------- bmp280 Sensor ------------------------------*/
+    /*----------------------------- BME680 Sensor ------------------------------*/
 
-    if (! bmp.begin(0x76))  Serial.println("Couldn't find bmp, but keep working");
+    if (! bme.begin(0x76))  Serial.println("Couldn't find bme, but keep working");
     
     /** Weather/Climate-monitor  Calibration */
-    bmp.setSampling(Adafruit_BMP280::MODE_FORCED, 
-                    Adafruit_BMP280::SAMPLING_X1, // temperature 
-                    Adafruit_BMP280::SAMPLING_X1, // pressure
-                    Adafruit_BMP280::FILTER_OFF ); 
+    bme.setSampling(Adafruit_bme280::MODE_FORCED, 
+                    Adafruit_bme280::SAMPLING_X1, // temperature 
+                    Adafruit_bme280::SAMPLING_X1, // pressure
+                    Adafruit_bme280::FILTER_OFF ); 
 
 
     /*-------------------------- WIFI async web server ----------------------*/
@@ -57,20 +57,20 @@ void setup() {
         request->send_P(200, "text/plain",  temp );
     } );
     server.on("/temp", HTTP_GET, [](AsyncWebServerRequest *request){
-        String ris = String( bmp.readTemperature() - 1.5 );  //ESP self heathing
+        String ris = String( bme.readTemperature() - 1.5 );  //ESP self heathing
         request->send_P(200, "text/plain", ris.c_str() );
     } );
     server.on("/press", HTTP_GET, [](AsyncWebServerRequest *request){
-        String ris = String( bmp.readPressure() / 100 );  //hPA
+        String ris = String( bme.readPressure() / 100 );  //hPA
         request->send_P(200, "text/plain", ris.c_str() );
     } );
     
     /*server.on("/hum", HTTP_GET, [](AsyncWebServerRequest *request){
-        char ris = (char)  bmp.readHumidity();
+        char ris = (char)  bme.readHumidity();
         request->send_P(200, "text/plain", &ris );
     } );
     server.on("/air", HTTP_GET, [](AsyncWebServerRequest *request){
-        char ris = (char)  bmp.readGas();
+        char ris = (char)  bme.readGas();
         request->send_P(200, "text/plain", &ris );
     } );*/
 
@@ -80,8 +80,8 @@ void setup() {
 
 //Only for testing (serial output) --> will be removed in 'production'
 void ambientMeasurement() {
-    temp_ext = ( bmp.readTemperature() - 1.5);  //BME self heating
-    pressure_ext = bmp.readPressure() / 100;
+    temp_ext = ( bme.readTemperature() - 1.5);  //BME self heating
+    pressure_ext = bme.readPressure() / 100;
     //humidity_ext = bme.readHumidity();
     //airIndex = bme.readGas();
 }
