@@ -1,8 +1,9 @@
 #include <Wire.h>
+#include <RTClib.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_HDC1000.h>
-#include <RTClib.h>
+#include <DHT.h> //heat-index
 
 #include <TFT_eSPI.h>
 #include <User_Setup_Select.h>
@@ -11,14 +12,14 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-
 static const byte batt_in = 34;
 
 /*-------------------- Sensori ------------------*/
 RTC_DS3231 rtc;
 Adafruit_BMP280 bmp;
 Adafruit_HDC1000 hdc;
-/*------------------ Variabili globali -------------------*/
+DHT util = DHT(NULL,DHT22); //just for heat-index
+/*--------------------- Variabili globali -------------------*/
 
 const char * ssid = "ESP-sensor";
 const char * password = "esp8266sensor";
@@ -34,21 +35,28 @@ static const char daysOfTheWeek[7][12] = {
     "Venerdì",
     "Sabato"
 };
+static const char airCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger", "Extreme-Danger"};
+static const char airQualityLevels[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
 DateTime currentTime;
 
+/** External sensor data may not be available --> initialised to NULL*/
 float voltage;
 int vPercent;
 float voltage_ext = NULL;
 int vPercent_ext = NULL;
+
 float temp;
 float temp_ext = NULL;
 float humidity;
 float humidity_ext = NULL;
 float pressure;
 float pressure_ext = NULL;
+
+float heatIndex;
+String heatIndexLevel ="NULL";
 float airTVOC = NULL;
-String airQuality = "NULL";
-/*-------------------------------------------------------*/
+String airQualityIndex = "NULL";
+/*----------------------------------------------------------*/
 
 void setup() {
     Serial.begin(115200);
@@ -58,8 +66,9 @@ void setup() {
 
     /*--------------------- Sensor initializing ----------------------*/
     if (!rtc.begin()) Serial.println("Couldn't find RTC");
+    rtc.disable32K();
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-
+    
     if (!bmp.begin(0x76))   Serial.println("Couldn't find BMP");
     /** Weather/Climate-monitor  Calibration */
     bmp.setSampling(Adafruit_BMP280::MODE_FORCED, 
@@ -67,19 +76,21 @@ void setup() {
                     Adafruit_BMP280::SAMPLING_X1, // pressure
                     Adafruit_BMP280::FILTER_OFF ); 
     
-    if(! hdc.begin())     Serial.println("Couldn't find HDC");
-
+    if(! hdc.begin(0x40))     Serial.println("Couldn't find HDC");
+    hdc.drySensor();
     /*------------------------------------------------------------------*/
 }
 
 
 int battPercentage(float v) {
-    /** Map seems to not work   vPercent = map(voltage, 3.1 , 4.20, 0, 100);
-     * Minimum voltage 3.1V (as 0%)
+    /** Map seems to not work   vPercent = map(voltage, 3.20 , 4.20, 0, 100);
+     * Minimum voltage 3.2V (as 0%)
      * Maximum voltage 4.2V (100%)
      */
-    if (v >= 3.1) //4.2-3.1
-        return (v - 3.1) * 100 / 1.1;
+    const float battMin = 3.2;
+    const float battMax = 4.2;  
+    if (v >= battMin)
+        return (v - battMin) * 100 / (battMax - battMin);
     else return 0;
 }
 
@@ -100,7 +111,7 @@ void readBattery() {
      * so multiply per 1/attenuation (now 2)
      * Sperimental offset in reading of 0.52V
      */
-    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2 ) + 0.52;
+    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2 + 0.52;
     vPercent = battPercentage(voltage);
 }
 
@@ -108,7 +119,7 @@ void readBattery() {
 void getTime() {
     currentTime = rtc.now();
 
-    Serial.print((String) currentTime.day() + "/" + (String) currentTime.month() + "/" + (String) currentTime.year() +
+    Serial.println((String) currentTime.day() + "/" + (String) currentTime.month() + "/" + (String) currentTime.year() +
         "  " + (String) daysOfTheWeek[currentTime.dayOfTheWeek()] + "  " + (String) currentTime.hour() +
         ":" + (String) currentTime.minute() + ":" + (String) currentTime.second());
 }
@@ -116,10 +127,22 @@ void getTime() {
 
 void ambientMeasurement() {
     bmp.MODE_FORCED;
-    temp = bmp.readTemperature() - 1.389; //BMP self heating;
-    pressure = bmp.readPressure() / 100;    //hPa
-    humidity = hdc.readHumidity();
+    temp = bmp.readTemperature();
+    pressure = bmp.readPressure() / 100;  //hPa
     bmp.MODE_SLEEP;
+
+    humidity = hdc.readHumidity();
+    heatIndex = util.computeHeatIndex(temp, humidity, false);
+    
+    if(heatIndex < 26)      heatIndexLevel = airCondition[0];
+    else if (heatIndex >= 26 && heatIndex <= 32)
+        heatIndexLevel = airCondition[1];
+    else if(heatIndex > 32 && heatIndex <= 41)
+        heatIndexLevel = airCondition[2];
+    else if(heatIndex > 41 && heatIndex <= 54)
+        heatIndexLevel = airCondition[3];
+    else    heatIndexLevel = airCondition[3];
+    
 }
 
 
@@ -171,22 +194,22 @@ void printToSerial() {
     /*--------------------------------------------------------------------------------*/
     Serial.print("Voltage: ");
     Serial.print(voltage, 3);
-    Serial.print("V");
-    Serial.println("\t" + (String) vPercent + "%");
+    Serial.println("V\t\t" + (String) vPercent + "%");
     /*--------------------------------------------------------------------------------*/
     Serial.println("Temperature BMP: " + (String) temp + " °C");
     Serial.println("Temperature HDC: " + (String) hdc.readTemperature() + " °C");
-    Serial.println("Temperature RTC: " + (String) (rtc.getTemperature() - 1) + " °C");  //About 1°C in excess
+    Serial.println("Temperature RTC: " + (String) rtc.getTemperature() + " °C");
     Serial.println("Pressure: " + (String) pressure + " hPa");
     Serial.println("Humidity: " + (String) humidity + " %RH");
+    Serial.println("Heat Index: " + (String) heatIndex + "\t" + heatIndexLevel);
     Serial.println();
     /*--------------------------------------------------------------------------------*/
     Serial.println("EXT_Voltage: " + (String) voltage_ext + " V\t" + (String) vPercent_ext + "%");
     Serial.println("EXT_Temperature: " + (String) temp_ext + " °C");
     Serial.println("EXT_Pressure: " + (String) pressure_ext + " hPa");
     Serial.println("EXT_Humidity: " + (String) humidity_ext + " %RH");
-    Serial.println("Air Quality: " + (String) airTVOC + " %RH");
-    Serial.println("\n-----------------------------------------");
+    Serial.println("Air Quality: " + (String) airTVOC + " ppm");
+    Serial.println("-----------------------------------------");
 }
 
 

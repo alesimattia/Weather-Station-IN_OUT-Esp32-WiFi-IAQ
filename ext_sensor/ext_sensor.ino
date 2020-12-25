@@ -109,7 +109,7 @@ float readBattery() {
     const float offset = 3.42;
     voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 * offset;
     return voltage_ext;
-    //My charging circuit: (Max-4.18V)(Min-3.1)
+    //My charging circuit: (Max-4.2V)(Min-3.2)
 }
 
 
