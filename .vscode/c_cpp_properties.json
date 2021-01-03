@@ -3,7 +3,6 @@
         {
             "name": "Win32",
             "includePath": [
-                "C:\\Users\\Alesi\\Documents\\Arduino\\libraries\\DHT_sensor_library",
                 "C:\\Users\\Alesi\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\**",
                 "C:\\Users\\Alesi\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\1.0.4\\**",
                 "C:\\Users\\Alesi\\Documents\\Arduino\\libraries\\**",
