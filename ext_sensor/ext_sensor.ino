@@ -7,7 +7,6 @@
 #include <ESPAsyncWebServer.h>
 
 #define esp8266
-#define ARDUINO_ARCH_ESP32
 
 /** Weather-Station (receiver) must be aware 
  * of these for synchronization */
@@ -28,7 +27,6 @@ float temp_ext;
 float humidity_ext;
 float pressure_ext;
 float airIndex = 0;
-String airQuality = "NULL";
 
 
 void setup() {
@@ -115,7 +113,7 @@ float readBattery() {
 
     //res_to_batt = 1.05 MOhm
     //res_in_A0 = 315.75 kOhm
-    return voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 ;;
+    return voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 ;
 }
 
 
@@ -134,6 +132,7 @@ void printToSerial() {
     Serial.println("----------------------------------------");
     /*--------------------------------------------------------------------------------*/
 }
+
 
 void checkutilStatus(void)
 {
