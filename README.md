@@ -12,12 +12,17 @@ This device measures the most relevant ambient parameters, like:
 - Heat index (Humidex)
 - Battery voltage and percentage (both in & out)
 
->Illuminance is intentionally not measured because of the need to expose the control unit to the direct sun.  
+<img style="float:right" alt="sun_path" src="./docs/sun_path.jpg" width="55%"/>
+<div style="float: left; width: 45%;" >
+Illuminance is intentionally not measured because of the need to expose the control unit to the direct sun.  
 In addition a single light sensor would not be able to give a correct reading because of the parabolic trajectory of the sun.  
 Furthermore, the movement path of the sun is not the same during an year nor in different latitudes.
-![Sun_Path](./docs/sun_path.jpg =500x)
-
->Similar argumentation for the wind gusts and direction: very bulky sensor and usually not so relevant (at least in my location). 
+</div>
+<br>
+<div>
+Similar argumentation for the wind gusts and direction: very bulky sensor and usually not so relevant (at least in my location).  
+</div>
+<br>
 
 An external wireless "probe", created via an ***"ESP8266 D1 Mini"*** is used to outside ambient surveys. By connecting to its SoftAP wireless network, this control unit will answer to HTTP requests and send sensor data in the payload.
 
@@ -78,12 +83,15 @@ Most common library is Adafruit_GFX (plus Adafruit_TFTSPI) but a [customised and
 The best API would have been this [TFT_eSPI](https://github.com/Bodmer/TFT_eSPI) that is specially optimised for ESP microcontrollers, but the configration is an hassle :sweat_smile:.  
 *(Feel free to let me know your custom configuration of this library for this display :smirk:)*
 
+**Touch screen** has not been used: maybe I will implement a touch display-dimming function in the future.  
+At the moment display dimming is code-scheduled.
+
 ##### NOTES #####
 
 1. For somewhat reason, software SPI connection is working at very slow speeds (I haven't the hardware to measure what, but VERY slow).  
 2. With Hardware SPI connection can achieve up to 79 MHz speed with an ESP32 and the hertz rate can be set by code.
 
-![Display pinout](./docs/display_pinout.jpg | width=1000)
+<img src="./docs/display_pinout.jpg" width="700">
 
 ### Images
 

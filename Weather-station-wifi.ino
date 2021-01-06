@@ -100,12 +100,12 @@ void setup() {
     
     ledcSetup(screen_pwm_channel, 5000, 8);
     ledcAttachPin(screen_led, screen_pwm_channel);
-    ledcWrite(screen_pwm_channel, 255);    //dutyCycle  0:255
+    //ledcWrite(screen_pwm_channel, 255);    //dutyCycle  0:255
 
     display.begin(79999999U);
     display.setRotation(3);
-    display.setFont(&URW_Gothic_L_Book_37);
-    display.setTextSize(1);
+    /*display.setFont(&URW_Gothic_L_Book_37);
+    display.setTextSize(1);*/
 }
 
 
@@ -242,50 +242,61 @@ void printToSerial() {
 
 void displayToScreen(){
 
-    ledcWrite(screen_pwm_channel, 250);
-    if(currentTime.hour() >= 21)     
-        ledcWrite(screen_pwm_channel, 10);
+    if(currentTime.hour() >= 21 && currentTime.hour() <= 23)     
+        ledcWrite(screen_pwm_channel, 8);
+    else if(currentTime.hour() >= 0 && currentTime.hour() <= 7)
+        ledcWrite(screen_pwm_channel, 3);
+    else if(currentTime.hour() >= 8 && currentTime.hour() <= 20)
+        ledcWrite(screen_pwm_channel, 250);
     display.fillScreen(ST7796S_BLACK);
     display.setTextColor(ST7796S_WHITE); 
 
-    /*------------------------TIME --------------------*/
-    display.setCursor(0, 40);
+    /*------------------------ DATE --------------------*/
+    display.setCursor(0, 30);
+    display.setFont(&URW_Gothic_L_Book_32);
     (currentTime.day()<10)  ?  display.print( "0" + (String)currentTime.day() + " / " )  :  display.print( (String)currentTime.day() + " / " );
     (currentTime.month()<10)  ?  display.print( "0"+(String)currentTime.month() )       :  display.print( (String)currentTime.month() );
-    display.print("  "+ (String) daysOfTheWeek[currentTime.dayOfTheWeek()] + "  ");
     
-    display.setFont(&URW_Gothic_L_Book_48);
+    display.setFont(&URW_Gothic_L_Book_25);
+    display.print("  "+ (String) daysOfTheWeek[currentTime.dayOfTheWeek()]);
+    
+    /*------------------------ CLOCK --------------------*/
+    display.setFont(&URW_Gothic_L_Book_32);
+    display.setTextSize(2);
+    display.setCursor(display.getCursorX()+32, 52);
     (currentTime.hour()<10)  ?  display.print( "0" + (String)currentTime.hour() )  :  display.print( (String)currentTime.hour() );
-    display.print(" : ");
+    display.print(":");
     (currentTime.minute()<10)  ?  display.println( "0" + (String)currentTime.minute() )  :  display.println( (String)currentTime.minute() );
 
     /*--------------------- Sensor data -------------------*/
-    display.setCursor(0, display.getCursorY()-12);
+    display.setTextSize(1);
     display.setFont(&URW_Gothic_L_Book_37);
-    display.setTextColor(0x4CA8);
+    display.setCursor(0, display.getCursorY()-47);
 
+    display.setTextColor(0x4CA8);
     display.print(voltage, 3);
     display.println(" V   " + (String) vPercent + "%");
     
     display.setTextColor(0xF9E7);
-	display.println("Temperature BMP:  " + (String) temp + " C");
-    display.println("Temperature HDC:  " + (String) hdc.readTemperature() + " C");
-    display.println("Temperature RTC:  " + (String) rtc.getTemperature() + " C");
-    display.setTextColor(0x0451);
-    display.println("Pressure:  " + (String) pressure + " hPa");
-    display.setTextColor(0x43B9);
-    display.println("Humidity:  " + (String) humidity + " %RH");
-    display.setTextColor(ST7796S_WHITE);
-    display.println("Heat Index:  " + (String) heatIndex + "   " + heatIndexLevel);
+	display.println("Temp BMP:  " + (String) temp + " C");
+    display.println("Temp HDC:  " + (String) hdc.readTemperature() + " C");
 
-    /*------------------- Ext. sensor data ----------------*/
+    display.setTextColor(0x0451);
+    display.println("Pres:  " + (String) pressure + " hPa");
+    display.setTextColor(0x43B9);
+    display.println("Hum:  " + (String) humidity + " %RH");
+
+    display.setTextColor(ST7796S_WHITE);
+    display.println("HeatIndex:  " + (String) heatIndex + "   " + heatIndexLevel);
+
+    /*------------------- External sensor data ----------------*/
     display.setCursor(0, display.getCursorY() );
-    display.print("External   ");
+    display.print("External---------");
 
     display.println((String) voltage_ext + " V   " + (String) vPercent_ext + "%");
-    display.println("Temperature: " + (String) temp_ext + " °C");
-    display.println("Pressure: " + (String) pressure_ext + " hPa");
-    Serial.println("Humidity: " + (String) humidity_ext + " %RH");
+    display.println("Temp: " + (String) temp_ext + " °C");
+    display.println("Press: " + (String) pressure_ext + " hPa");
+    Serial.println("Hum: " + (String) humidity_ext + " %RH");
     Serial.println("tVOC: " + (String) airTVOC + " ppm");
 }
 
