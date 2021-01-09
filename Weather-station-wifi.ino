@@ -1,19 +1,18 @@
+#include <TFT_eSPI.h>
+#include <User_Setup_Select.h>
+#include <User_Setup.h>
+#include <Custom_font.h>
+
 #include <Wire.h>
 
 #include <RTClib.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_HDC1000.h>
-#include <Adafruit_ST7796S_kbv.h>
 #include <DHT.h> //heat-index
 
 #include <WiFi.h>
 #include <HTTPClient.h>
-
-#include <Fonts/FreeSans12pt7b.h> //original
-#include <Fonts/urw_gothic.h>
-
-#define ESP32
 
 
 /*-------------------- Sensori ------------------*/
@@ -27,13 +26,12 @@ static const byte batt_in = 34;
 /*---------------------------- Variabili globali ------------------------*/
 static const char * ssid = "ESP-sensor";
 static const char * password = "esp8266sensor";
-static const int TIME_TO_NEXT_READ = 10000 + 100; //TIME_TO_SLEEP in "ext_sensor.ino"
 
 static const byte screen_pwm_channel = 0;
 static const byte screen_led = 16;
 static const byte screen_reset = 17;
 static const byte screen_DC = 4;    //Data Command pin
-Adafruit_ST7796S_kbv display = Adafruit_ST7796S_kbv(5,screen_DC,screen_reset);
+TFT_eSPI display = TFT_eSPI();
 
 
 static const char daysOfTheWeek[7][12] = {
@@ -73,6 +71,9 @@ String airQualityIndex = "NULL";
 /*-----------------------------------------------------------------------*/
 
 void setup() {
+	WiFi.mode(WIFI_OFF); delay(1);
+	btStop(); delay(1);
+
     Serial.begin(115200);
     Wire.begin();
 
@@ -94,18 +95,17 @@ void setup() {
     
 
     if(! hdc.begin(0x40))     Serial.println("Couldn't find HDC");
-    hdc.drySensor();
+    //hdc.drySensor();		/** Blocking => wasting time, disabled while not in production */
 
     /*-----------------------  Display ---------------------------------*/
     
     ledcSetup(screen_pwm_channel, 5000, 8);
     ledcAttachPin(screen_led, screen_pwm_channel);
-    //ledcWrite(screen_pwm_channel, 255);    //dutyCycle  0:255
-
-    display.begin(79999999U);
-    display.setRotation(3);
-    /*display.setFont(&URW_Gothic_L_Book_37);
-    display.setTextSize(1);*/
+   
+	display.begin();
+    display.setSwapBytes(true); /* Endianess */
+	display.setRotation(3);
+	display.setTextSize(1);
 }
 
 
@@ -242,62 +242,66 @@ void printToSerial() {
 
 void displayToScreen(){
 
-    if(currentTime.hour() >= 21 && currentTime.hour() <= 23)     
+    if(currentTime.hour() >= 21 && currentTime.hour() < 23)     
         ledcWrite(screen_pwm_channel, 8);
-    else if(currentTime.hour() >= 0 && currentTime.hour() <= 7)
+    else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 7) )
         ledcWrite(screen_pwm_channel, 3);
     else if(currentTime.hour() >= 8 && currentTime.hour() <= 20)
         ledcWrite(screen_pwm_channel, 250);
-    display.fillScreen(ST7796S_BLACK);
-    display.setTextColor(ST7796S_WHITE); 
 
-    /*------------------------ DATE --------------------*/
-    display.setCursor(0, 30);
-    display.setFont(&URW_Gothic_L_Book_32);
-    (currentTime.day()<10)  ?  display.print( "0" + (String)currentTime.day() + " / " )  :  display.print( (String)currentTime.day() + " / " );
+    display.fillScreen(TFT_BLACK);
+	display.setTextColor(TFT_WHITE);
+
+	//DATE
+	display.setFreeFont(&URW_Gothic_L_Book_41);
+	display.setCursor(1, 32+2);		/* 32 is number's font height */
+	(currentTime.day()<10)  ?  display.print( "0" + (String)currentTime.day() + " / " )  :  display.print( (String)currentTime.day() + " / " );
     (currentTime.month()<10)  ?  display.print( "0"+(String)currentTime.month() )       :  display.print( (String)currentTime.month() );
     
-    display.setFont(&URW_Gothic_L_Book_25);
+	//WEEK
+    display.setFreeFont(&URW_Gothic_L_Book_29);
     display.print("  "+ (String) daysOfTheWeek[currentTime.dayOfTheWeek()]);
-    
-    /*------------------------ CLOCK --------------------*/
-    display.setFont(&URW_Gothic_L_Book_32);
-    display.setTextSize(2);
-    display.setCursor(display.getCursorX()+32, 52);
-    (currentTime.hour()<10)  ?  display.print( "0" + (String)currentTime.hour() )  :  display.print( (String)currentTime.hour() );
+
+	//Clock position
+	display.setFreeFont(&URW_Gothic_L_Book_75);
+	int text_w = display.textWidth("00:00");
+	display.setCursor( display.width() - text_w -1, 57+2 );	/* 57 is number max height for this font and size */
+	//CLOCK
+	(currentTime.hour()<10)  ?  display.print( "0" + (String)currentTime.hour() )  :  display.print( (String)currentTime.hour() );
     display.print(":");
-    (currentTime.minute()<10)  ?  display.println( "0" + (String)currentTime.minute() )  :  display.println( (String)currentTime.minute() );
+    (currentTime.minute()<10)  ?  display.print( "0" + (String)currentTime.minute() )  :  display.print( (String)currentTime.minute() );
 
-    /*--------------------- Sensor data -------------------*/
-    display.setTextSize(1);
-    display.setFont(&URW_Gothic_L_Book_37);
-    display.setCursor(0, display.getCursorY()-47);
+	//WEATHER FORECAST
+	const byte forecast_w = 120, forecast_h = 75;	/* PLACEHOLDER -> removed when inserting icons */
+	display.setCursor(1, display.getCursorY()+4);	/* Upper font size + 4 */ 
+	display.drawRoundRect(1, display.getCursorY(), forecast_w, forecast_h, 5, TFT_LIGHTGREY);
 
-    display.setTextColor(0x4CA8);
-    display.print(voltage, 3);
-    display.println(" V   " + (String) vPercent + "%");
-    
-    display.setTextColor(0xF9E7);
-	display.println("Temp BMP:  " + (String) temp + " C");
-    display.println("Temp HDC:  " + (String) hdc.readTemperature() + " C");
+	//EXTERNAL SENSOR DATA
+	display.setFreeFont(&URW_Gothic_L_Book_41);
+	display.setCursor(1, display.getCursorY() + forecast_h + 32 + 1);	/* 32 is number max height for this font and size */
+	display.setTextColor(0x0451);
+    display.print((int) pressure_ext); 
+	display.setFreeFont(&URW_Gothic_L_Book_29);
+	display.println(" hPa");
 
-    display.setTextColor(0x0451);
-    display.println("Pres:  " + (String) pressure + " hPa");
-    display.setTextColor(0x43B9);
-    display.println("Hum:  " + (String) humidity + " %RH");
+	display.setCursor(1, display.getCursorY() + 20);
+	display.setTextColor(0xF9E7);
+	display.setFreeFont(&URW_Gothic_L_Book_41);
+	display.print(temp_ext, 1);
+	display.setFreeFont(&URW_Gothic_L_Book_29);
+	display.println(" 'C");
 
-    display.setTextColor(ST7796S_WHITE);
-    display.println("HeatIndex:  " + (String) heatIndex + "   " + heatIndexLevel);
+	display.setTextColor(0x43B9);
+	display.setFreeFont(&URW_Gothic_L_Book_41);
+	display.print(humidity_ext, 1);
+	display.setFreeFont(&URW_Gothic_L_Book_29);
+	display.println(" %rH");
 
-    /*------------------- External sensor data ----------------*/
-    display.setCursor(0, display.getCursorY() );
-    display.print("External---------");
-
-    display.println((String) voltage_ext + " V   " + (String) vPercent_ext + "%");
-    display.println("Temp: " + (String) temp_ext + " °C");
-    display.println("Press: " + (String) pressure_ext + " hPa");
-    Serial.println("Hum: " + (String) humidity_ext + " %RH");
-    Serial.println("tVOC: " + (String) airTVOC + " ppm");
+	display.setTextColor(0x4CA8);
+	display.setFreeFont(&URW_Gothic_L_Book_41);
+	display.print((String)vPercent_ext + "%   " + (String)voltage_ext);
+	display.setFreeFont(&URW_Gothic_L_Book_29);
+    display.println("V");
 }
 
 
@@ -310,5 +314,5 @@ void loop() {
     //printToSerial();
     displayToScreen();
 
-    delay(20000);
+    delay(3000);
 }
