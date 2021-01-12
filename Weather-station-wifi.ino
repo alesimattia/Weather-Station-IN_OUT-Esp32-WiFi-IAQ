@@ -14,7 +14,6 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-
 /*-------------------- Sensori ------------------*/
 RTC_DS3231 rtc;
 Adafruit_BMP280 bmp;
@@ -45,7 +44,7 @@ static const char daysOfTheWeek[7][12] = {
 };
 DateTime currentTime;
 
-static const char airCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger", "Extreme-Danger"};
+static const char heatCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger", "Extreme-Danger"};
 static const char airQualityLevels[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
 
 
@@ -66,7 +65,7 @@ float pressure_ext = NULL;
 float heatIndex;
 String heatIndexLevel ="NULL";
 float airTVOC = NULL;
-String airQualityIndex = "NULL";
+String airQualityIndex = airQualityLevels[0];
 
 /*-----------------------------------------------------------------------*/
 
@@ -160,14 +159,14 @@ void ambientMeasurement() {
     humidity = hdc.readHumidity();
     heatIndex = util.computeHeatIndex(temp, humidity, false);
 
-    if(heatIndex < 26)      heatIndexLevel = airCondition[0];
+    if(heatIndex < 26)      heatIndexLevel = heatCondition[0];
     else if (heatIndex >= 26 && heatIndex <= 32)
-        heatIndexLevel = airCondition[1];
+        heatIndexLevel = heatCondition[1];
     else if(heatIndex > 32 && heatIndex <= 41)
-        heatIndexLevel = airCondition[2];
+        heatIndexLevel = heatCondition[2];
     else if(heatIndex > 41 && heatIndex <= 54)
-        heatIndexLevel = airCondition[3];
-    else    heatIndexLevel = airCondition[3];
+        heatIndexLevel = heatCondition[3];
+    else    heatIndexLevel = heatCondition[3];
     
 }
 
@@ -242,8 +241,9 @@ void printToSerial() {
 
 void displayToScreen(){
 
+    /*---------------------------------------- BRIGHTNESS -------------------------------*/
     if(currentTime.hour() >= 21 && currentTime.hour() < 23)     
-        ledcWrite(screen_pwm_channel, 8);
+        ledcWrite(screen_pwm_channel, 11);
     else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 7) )
         ledcWrite(screen_pwm_channel, 3);
     else if(currentTime.hour() >= 8 && currentTime.hour() <= 20)
@@ -254,12 +254,12 @@ void displayToScreen(){
 
 	//DATE
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-	display.setCursor(1, 32+2);		/* 32 is number's font height */
+	display.setCursor(1, 32+3);		/* 32 is number's font height */
 	(currentTime.day()<10)  ?  display.print( "0" + (String)currentTime.day() + " / " )  :  display.print( (String)currentTime.day() + " / " );
     (currentTime.month()<10)  ?  display.print( "0"+(String)currentTime.month() )       :  display.print( (String)currentTime.month() );
     
 	//WEEK
-    display.setFreeFont(&URW_Gothic_L_Book_29);
+    display.setFreeFont(&URW_Gothic_L_Book_28);
     display.print("  "+ (String) daysOfTheWeek[currentTime.dayOfTheWeek()]);
 
 	//Clock position
@@ -271,37 +271,77 @@ void displayToScreen(){
     display.print(":");
     (currentTime.minute()<10)  ?  display.print( "0" + (String)currentTime.minute() )  :  display.print( (String)currentTime.minute() );
 
+
 	//WEATHER FORECAST
 	const byte forecast_w = 120, forecast_h = 75;	/* PLACEHOLDER -> removed when inserting icons */
 	display.setCursor(1, display.getCursorY()+4);	/* Upper font size + 4 */ 
 	display.drawRoundRect(1, display.getCursorY(), forecast_w, forecast_h, 5, TFT_LIGHTGREY);
 
-	//EXTERNAL SENSOR DATA
+	/*--------------------------------- SENSOR DATA ------------------------------------------*/
+    //Right alignment
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-	display.setCursor(1, display.getCursorY() + forecast_h + 32 + 1);	/* 32 is number max height for this font and size */
+    const short right_offset = display.textWidth("00.0%rH");
+    
+    //OUT - pressure
+    display.setFreeFont(&URW_Gothic_L_Book_28);
+    display.setCursor(display.getCursorX() + forecast_w + 10, display.getCursorY() + 41);
 	display.setTextColor(0x0451);
-    display.print((int) pressure_ext); 
-	display.setFreeFont(&URW_Gothic_L_Book_29);
-	display.println(" hPa");
+    display.println((int) pressure_ext + " hPa");
 
-	display.setCursor(1, display.getCursorY() + 20);
+    //AIR QUALITY
+    display.setCursor(forecast_w + 10, display.getCursorY() + 2);
+    display.setTextColor(TFT_LIGHTGREY);
+    display.println( (String)(int)airTVOC + " ppm tVOC - "+ airQualityIndex);
+
+    //HEAT INDEX
+    display.setTextColor(TFT_YELLOW);
+    display.print("H.I:  " + (String)(int)heatIndex + "'C -> " + (String) heatIndexLevel);
+
+    //IN tag
+    display.setFreeFont(&URW_Gothic_L_Book_28);
+    display.setTextColor(TFT_WHITE);
+    display.setCursor(display.width()-right_offset, display.getCursorY());
+    display.println("- IN -");
+
+    //OUT - temp
+	display.setCursor(1, display.getCursorY() + 25);    //light Y offset
 	display.setTextColor(0xF9E7);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.print(temp_ext, 1);
-	display.setFreeFont(&URW_Gothic_L_Book_29);
+	display.setFreeFont(&URW_Gothic_L_Book_28);
+	display.print(" 'C");
+    //IN
+    display.setFreeFont(&URW_Gothic_L_Book_41);
+    display.setCursor(display.width()-right_offset, display.getCursorY());
+    display.print(temp,1);
+    display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.println(" 'C");
 
+    //OUT - humidity
+	display.setCursor(1, display.getCursorY() + 5);
 	display.setTextColor(0x43B9);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.print(humidity_ext, 1);
-	display.setFreeFont(&URW_Gothic_L_Book_29);
+	display.setFreeFont(&URW_Gothic_L_Book_28);
+	display.print(" %rH");
+    //IN
+    display.setFreeFont(&URW_Gothic_L_Book_41);
+    display.setCursor(display.width()-right_offset, display.getCursorY());
+    display.print(humidity,1);
+    display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.println(" %rH");
 
+    //OUT - voltage
+	display.setCursor(1, display.getCursorY() + 5);
 	display.setTextColor(0x4CA8);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.print((String)vPercent_ext + "%   " + (String)voltage_ext);
-	display.setFreeFont(&URW_Gothic_L_Book_29);
-    display.println("V");
+	display.setFreeFont(&URW_Gothic_L_Book_28);
+	display.print("V");
+    //IN
+    display.setCursor(display.width()-display.textWidth("0.00V"), display.getCursorY());
+    display.print((String)voltage);
+	display.println("V");
 }
 
 
