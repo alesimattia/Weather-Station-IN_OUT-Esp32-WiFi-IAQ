@@ -4,25 +4,23 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME680.h>
 #include <ESP8266WiFi.h>
-#include <ESPAsyncWebServer.h>
+#include <ESP8266HTTPClient.h>
 
-#define esp8266
+#define ESP8266
 
-/** Weather-Station (receiver) must be aware 
- * of these for synchronization */
-static const byte TIME_TO_SLEEP = 4200;
-static const byte TIME_TO_LISTEN_HTTP = 1;
+static unsigned long TIME_TO_NEXT_SENDING = 1000;   /** Override from HTTP response payload */
 
-
-const char* ssid = "ESP-sensor";
-const char* password = "esp8266sensor";
-AsyncWebServer server(80);
+static const char * SSID = "ESP-WeatherStation";
+static const char * PASS = "esp32station";
+static const uint8_t bssid[] = {0x30, 0xAE ,0xA4,0x98,0x83,0xB8}; /** In AP call WiFi.macAddress() -- "30:AE:A4:98:83:B8" */
+static const IPAddress staticIP(192,168,4,2);
+static const IPAddress gateway(192,168,4,1);
+static const IPAddress subnet(255,255,255,0);
 
 Adafruit_BME680 bme;
-Bsec util;
+//Bsec util;
 
 float voltage_ext;
-int vPercent_ext;
 float temp_ext;
 float humidity_ext;
 float pressure_ext;
@@ -30,12 +28,19 @@ float airIndex = 0;
 
 
 void setup() {
+    /** Disabling WiFi when waking up */
+    WiFi.mode(WIFI_OFF);
+    WiFi.forceSleepBegin(); delay(1);
 
-    Serial.begin(115200);   //Will be removed for 'production' to save battery
-    Wire.begin(); //I2C start
     system_deep_sleep_set_option(0);
-    pinMode('A0', INPUT);
 
+    pinMode(2, OUTPUT);
+    digitalWrite(2,HIGH); /*Turn off built-in led */
+    
+    Serial.begin(115200);   //Will be removed for 'production' to save battery
+    Wire.begin();
+
+    pinMode('A0', INPUT); /** Battery voltage divider */
 
     /*----------------------------- BME680 Sensor ------------------------------*/
 
@@ -48,33 +53,8 @@ void setup() {
     bme.setIIRFilterSize(BME680_FILTER_SIZE_0);
     bme.setGasHeater(320, 150); 
 
-    util.begin(BME680_I2C_ADDR_SECONDARY, Wire);
-    checkutilStatus();
-    
-    /*-------------------------- WIFI async web server ----------------------*/
-    WiFi.softAP(ssid, password);
-    //Serial.println( WiFi.softAPIP() );  /** 192.168.4.1 */
-
-    /*---------------------------- HTTP requests ---------------------------*/
-    server.on("/voltage", HTTP_GET, [](AsyncWebServerRequest *request){
-        char temp[6];
-        dtostrf(readBattery(), 2, 4, temp);
-        request->send_P(200, "text/plain",  temp );
-    } );
-    server.on("/temp", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send_P(200, "text/plain", String( bme.readTemperature() ).c_str() );
-    } );
-    server.on("/press", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send_P(200, "text/plain", String( bme.readPressure() / 100.0 ).c_str() );
-    } );
-    server.on("/hum", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send_P(200, "text/plain", String( bme.readHumidity() ).c_str() );
-    } );
-    server.on("/air", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send_P(200, "text/plain", String( bme.readGas() / 1000.0 ).c_str() );
-    } );
-
-    server.begin();
+    //util.begin(BME680_I2C_ADDR_SECONDARY, Wire);
+    //checkutilStatus();
 }
 
 
@@ -86,13 +66,13 @@ void ambientMeasurement() {
     humidity_ext = bme.humidity;
     airIndex = bme.gas_resistance / 1000.0;
 
-    while (! util.run()) { // If no data is available
+    /*while (! util.run()) { // If no data is available
         Serial.println("BSEC calculations not ready");
         //return;
     }
     Serial.println("\nIAQ: " + String(util.iaq) + "\nAccuracy: " + String(util.iaqAccuracy) 
                  + "\nStatic-IAQ: " + String(util.staticIaq) +"\nCO2 " + String(util.co2Equivalent)
-                 + "\nBreath-VOC" + String(util.breathVocEquivalent) );
+                 + "\nBreath-VOC" + String(util.breathVocEquivalent) );*/
 }
 
 
@@ -111,9 +91,52 @@ float readBattery() {
     for (byte x = 0; x < nReadings; x++)
         voltage_reading += analogRead('A0');
 
-    //res_to_batt = 1.05 MOhm
-    //res_in_A0 = 315.75 kOhm
+    //res_to_batt = 1.00 MOhm
+    //res_in_gnd = 240.50 kOhm
     return voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 ;
+}
+
+
+void sendData(){
+
+  WiFi.forceSleepWake();   delay(1);
+  /** Avoid saving network connection information to flash, 
+   * and then reading back when it next starts the WIFI */
+  WiFi.persistent(false);   
+  WiFi.mode(WIFI_STA);  
+  //WiFi.config(staticIP, gateway, subnet);
+  //WiFi.begin(SSID, PASS, 1, bssid, true);  /** Faster with BSSID + channel*/
+  WiFi.begin(SSID, PASS);
+  
+  byte retries = 0;
+  while( WiFi.status() != WL_CONNECTED && retries<200 ){ 
+    retries++;
+    delay(10);
+  }
+  if(retries = 200 && WiFi.status() == WL_DISCONNECTED){
+    WiFi.disconnect(true); delay( 1 );
+    WiFi.mode(WIFI_OFF);
+    Serial.println("No access point.");
+    return;
+  }
+    
+  HTTPClient http;
+  /**GET requests with data in the query string
+   * Hardcoded domain url for less power consumption 
+   **/
+  http.begin((String)"192.168.4.1/update" + "?temp=" + (String)temp_ext + "&hum=" + (String)humidity_ext + "&press=" + (String)pressure_ext
+                                          + "&airIndex=" + (String)airIndex + "&volt=" + (String)voltage_ext);  
+  if( http.GET() == 200){
+    TIME_TO_NEXT_SENDING = (unsigned long) http.getString().toFloat();  /**Need 32bit variable */
+    Serial.println("Data sent correctly");
+    Serial.println("Server told me to sleep for: " + (String)(TIME_TO_NEXT_SENDING/1000U) + "s");
+  }
+  else  Serial.println("Error sending data");
+  
+  http.end();
+  
+  WiFi.disconnect(true); delay(1);
+  WiFi.mode(WIFI_OFF);
 }
 
 
@@ -121,8 +144,7 @@ void printToSerial() {
     /*--------------------------------------------------------------------------------*/
     Serial.print("Voltage: ");
     Serial.print(voltage_ext, 4);
-    Serial.print("V");
-    Serial.println("\t" + (String) vPercent_ext + "%");
+    Serial.println("V");
     /*--------------------------------------------------------------------------------*/
     Serial.println("Temperature: " + (String) temp_ext + " °C");
     Serial.println("Pressure: " + (String) pressure_ext + " hPa");
@@ -134,7 +156,7 @@ void printToSerial() {
 }
 
 
-void checkutilStatus(void)
+/*void checkutilStatus(void)
 {
   if (util.status != BSEC_OK) {
     if (util.status < BSEC_OK) {
@@ -152,16 +174,19 @@ void checkutilStatus(void)
     }
   }
 }
+*/
 
-/** A delay will let the ESP to stay on for the time 
-     * to being reacheable to the weather-station via WIFI 
-     * and get the data from ext_sensor device --> then sleep
-**/ 
+
 void loop() {
-    readBattery();
     ambientMeasurement();
+    readBattery();
     printToSerial();
-    delay(3000);
-    //delay(TIME_TO_LISTEN_HTTP * 1000);
-    //ESP.deepSleep(TIME_TO_SLEEP * 1E6, WAKE_RF_DEFAULT);
+    while(TIME_TO_NEXT_SENDING == 1000){  //Syncs first time to weather-station
+      sendData();
+      delay(1000);
+    }
+    sendData();
+
+    ESP.deepSleep(TIME_TO_NEXT_SENDING *1000U, WAKE_RF_DISABLED);  //Minutes expressed in milliseconds converted to microseconds
+    delay(1); /*Needed for proper sleeping*/
 }

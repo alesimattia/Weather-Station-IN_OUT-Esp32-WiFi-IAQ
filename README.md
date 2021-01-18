@@ -117,4 +117,4 @@ Adafruit_GFX::setTextColor( Adafruit_GFX::color565(255,255,255)
 
 ## Battery measurement
 
-## External control module
+## External ESP sensor

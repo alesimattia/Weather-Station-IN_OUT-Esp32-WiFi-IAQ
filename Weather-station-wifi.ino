@@ -12,22 +12,28 @@
 #include <DHT.h> //heat-index
 
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+AsyncWebServer server(80);
+
+#define ESP8266     /**Better to have for some libraries */
 
 /*-------------------- Sensori ------------------*/
 RTC_DS3231 rtc;
-Adafruit_BMP280 bmp;
-Adafruit_HDC1000 hdc;
+Adafruit_BMP280 bmp = Adafruit_BMP280();
+Adafruit_HDC1000 hdc = Adafruit_HDC1000();
 DHT util = DHT(NULL,DHT22); //just for heat-index
 
 static const byte batt_in = 34;
 
 /*---------------------------- Variabili globali ------------------------*/
-static const char * ssid = "ESP-sensor";
-static const char * password = "esp8266sensor";
+static const char * AP_SSID = "ESP-WeatherStation";
+static const char * AP_PASS = "esp32station";
+static const unsigned long TIME_TO_NEXT_HTTP = 1 *10U *1000U;  //Minutes converted in milliseconds
+unsigned long previousMillis = 0;
 
-static const byte screen_pwm_channel = 0;
-static const byte screen_led = 16;
+static const uint8_t screen_pwm_channel = 0;
+static const uint8_t screen_led = 16;
 static const byte screen_reset = 17;
 static const byte screen_DC = 4;    //Data Command pin
 TFT_eSPI display = TFT_eSPI();
@@ -45,7 +51,7 @@ static const char daysOfTheWeek[7][12] = {
 DateTime currentTime;
 
 static const char heatCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger", "Extreme-Danger"};
-static const char airQualityLevels[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
+static const char airCondition[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
 
 
 /*----------------------- Environment data  -------------------------------*/
@@ -65,13 +71,14 @@ float pressure_ext = NULL;
 float heatIndex;
 String heatIndexLevel ="NULL";
 float airTVOC = NULL;
-String airQualityIndex = airQualityLevels[0];
+String airQualityIndex = airCondition[0];
 
-/*-----------------------------------------------------------------------*/
+
 
 void setup() {
-	WiFi.mode(WIFI_OFF); delay(1);
-	btStop(); delay(1);
+    /** Disabling WiFi when waking up */
+    WiFi.mode(WIFI_OFF); delay(1);
+    btStop(); delay(1);
 
     Serial.begin(115200);
     Wire.begin();
@@ -85,26 +92,56 @@ void setup() {
         rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
 
+    bmp.reset();
     if (!bmp.begin(0x76))   Serial.println("Couldn't find BMP");
+    delay(2);   /** Start-up time*/
     /** Weather/Climate-monitor  Calibration */
     bmp.setSampling(Adafruit_BMP280::MODE_FORCED, 
                     Adafruit_BMP280::SAMPLING_X1, // temperature 
                     Adafruit_BMP280::SAMPLING_X1, // pressure
-                    Adafruit_BMP280::FILTER_OFF ); 
+                    Adafruit_BMP280::FILTER_OFF); 
     
 
     if(! hdc.begin(0x40))     Serial.println("Couldn't find HDC");
     //hdc.drySensor();		/** Blocking => wasting time, disabled while not in production */
 
+
     /*-----------------------  Display ---------------------------------*/
-    
-    ledcSetup(screen_pwm_channel, 5000, 8);
+    ledcSetup(screen_pwm_channel, 5000.0, 8);
     ledcAttachPin(screen_led, screen_pwm_channel);
-   
+
 	display.begin();
     display.setSwapBytes(true); /* Endianess */
-	display.setRotation(3);
+	display.setRotation('3');
 	display.setTextSize(1);
+
+
+
+    /*-------------------------------------ASYNC WEB SERVER test----------------------------*/
+    WiFi.mode(WIFI_MODE_AP);
+    WiFi.persistent(false);
+    WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 2);   /** Channel 1*/
+    Serial.println( WiFi.softAPIP().toString() + " MAC for BSSID: " + WiFi.macAddress() );
+
+    /*---------------------------- HTTP requests ---------------------------*/
+    server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
+
+        if (request->hasParam("temp") && request->hasParam("hum") && request->hasParam("press") &&
+            request->hasParam("airIndex") && request->hasParam("volt") 
+            ){
+                temp_ext = request->getParam("temp")->value().toFloat();
+                humidity_ext = request->getParam("hum")->value().toFloat();
+                pressure_ext = request->getParam("press")->value().toFloat();
+                airTVOC = request->getParam("airIndex")->value().toFloat();
+                    //airQualityIndex = getAirCondition(airTVOC);
+                voltage_ext = request->getParam("volt")->value().toFloat();
+                    vPercent_ext = battPercentage(voltage_ext);
+        }
+        else    Serial.println("Bad URL");
+
+        request->send(200,"text/plain", (String)TIME_TO_NEXT_HTTP);
+    });
+    server.begin();
 }
 
 
@@ -141,25 +178,16 @@ void readBattery() {
 }
 
 
-void getTime() {
-    currentTime = rtc.now();
-
-    Serial.println((String) currentTime.day() + "/" + (String) currentTime.month() + "/" + (String) currentTime.year() +
-        "  " + (String) daysOfTheWeek[currentTime.dayOfTheWeek()] + "  " + (String) currentTime.hour() +
-        ":" + (String) currentTime.minute() + ":" + (String) currentTime.second());
-}
-
-
 void ambientMeasurement() {
-    bmp.MODE_FORCED;
+   
+    bmp.takeForcedMeasurement();    /** Mandatory while in forced mode */
     temp = bmp.readTemperature();
     pressure = bmp.readPressure() / 100;  //hPa
-    bmp.MODE_SLEEP;
 
     humidity = hdc.readHumidity();
     heatIndex = util.computeHeatIndex(temp, humidity, false);
-
-    if(heatIndex < 26)      heatIndexLevel = heatCondition[0];
+    
+    if(heatIndex < 26)   heatIndexLevel = heatCondition[0];
     else if (heatIndex >= 26 && heatIndex <= 32)
         heatIndexLevel = heatCondition[1];
     else if(heatIndex > 32 && heatIndex <= 41)
@@ -167,56 +195,56 @@ void ambientMeasurement() {
     else if(heatIndex > 41 && heatIndex <= 54)
         heatIndexLevel = heatCondition[3];
     else    heatIndexLevel = heatCondition[3];
-    
 }
 
 
-String httpGETrequest(const char * serverName) {
-    HTTPClient http;
-    http.begin(serverName);
+void startAsyncServer(){
 
-    if (http.GET() > 0) //contains the ResponseCode
-        return http.getString();    //contains the Payload
-    else {
-        Serial.println("Bad request; code: " + http.GET());
-        return "";
+    WiFi.mode(WIFI_MODE_AP);
+    WiFi.persistent(false);
+    WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 2);   /** Channel 1*/
+    Serial.println( WiFi.softAPIP().toString() + " MAC for BSSID: " + WiFi.macAddress() );
+
+    /*---------------------------- HTTP requests ---------------------------*/
+    server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
+
+        if (request->hasParam("temp") && request->hasParam("hum") && request->hasParam("press") &&
+            request->hasParam("airIndex") && request->hasParam("volt") 
+            ){
+                temp_ext = request->getParam("temp")->value().toFloat();
+                humidity_ext = request->getParam("hum")->value().toFloat();
+                pressure_ext = request->getParam("press")->value().toFloat();
+                airTVOC = request->getParam("airIndex")->value().toFloat();
+                    //airQualityIndex = getAirCondition(airTVOC);
+                voltage_ext = request->getParam("volt")->value().toFloat();
+                    vPercent_ext = battPercentage(voltage_ext);
+        }
+        else    Serial.println("Bad URL");
+
+        request->send(200,"text/plain", (String)TIME_TO_NEXT_HTTP);
+    });
+    server.begin();
+
+    unsigned int retries = 0;
+    while( WiFi.softAPgetStationNum() != 0 || retries<3000){    //Small window to listen for http requests.
+        retries++; 
+        delay(1);
     }
-    http.end(); // Free resources
-}
 
+    if(retries >= 3000)
+        Serial.println("NO device connected.\n");
+    else    
+        Serial.println("Device has connected!\n.");
 
-void getExtSensor() {
-    /*--------------------- Initialization -----------------*/
-    WiFi.begin(ssid, password);
-    Serial.print("Connecting: ");
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.print("\n External sensor WIFI connected: ");
-    Serial.println(WiFi.localIP());
-    /*------------------------------------------------------*/
-
-    /** Can be fixed to 192.168.4.1 */
-    static const String gateway = WiFi.gatewayIP().toString();
-    Serial.println("Gateway: " + gateway);
-
-    voltage_ext = httpGETrequest(("http://" + gateway + "/volt").c_str()).toFloat();
-    vPercent_ext = battPercentage(voltage_ext);
-    temp_ext = httpGETrequest(("http://" + gateway + "/temp").c_str()).toFloat();
-    humidity_ext = httpGETrequest(("http://" + gateway + "/hum").c_str()).toFloat();
-    pressure_ext = httpGETrequest(("http://" + gateway + "/press").c_str()).toFloat();
-    airTVOC = httpGETrequest(("http://" + gateway + "/air").c_str()).toFloat();
-
-    /**Doesn't repeat the connection attempt until the ext_sensor
-     * will be ready to answer the requests. 
-     * It goes in deepSleep mode after a cycle of requests (to implement)
-     * This is a syncronization constant => TIME_TO_SLEEP in the "ext_sensor.ino"
-     **/
+    WiFi.softAPdisconnect(true); /**Includes WIFI radio shut-down */
 }
 
 
 void printToSerial() {
+
+    Serial.println((String) currentTime.day() + "/" + (String) currentTime.month() + "/" + (String) currentTime.year() +
+        "  " + (String) daysOfTheWeek[currentTime.dayOfTheWeek()] + "  " + (String) currentTime.hour() +
+        ":" + (String) currentTime.minute() + ":" + (String) currentTime.second());
     /*--------------------------------------------------------------------------------*/
     Serial.print("Voltage: ");
     Serial.print(voltage, 3);
@@ -239,33 +267,31 @@ void printToSerial() {
 }
 
 
-void displayToScreen(){
-
+void displayToScreen(){ 
     /*---------------------------------------- BRIGHTNESS -------------------------------*/
     if(currentTime.hour() >= 21 && currentTime.hour() < 23)     
-        ledcWrite(screen_pwm_channel, 11);
+         ledcWrite(screen_pwm_channel, 20);
     else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 7) )
-        ledcWrite(screen_pwm_channel, 3);
-    else if(currentTime.hour() >= 8 && currentTime.hour() <= 20)
-        ledcWrite(screen_pwm_channel, 250);
+         ledcWrite(screen_pwm_channel, 2);
+    else ledcWrite(screen_pwm_channel, 220);    /* 8:00-20:00 */
 
     display.fillScreen(TFT_BLACK);
 	display.setTextColor(TFT_WHITE);
 
 	//DATE
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-	display.setCursor(1, 32+3);		/* 32 is number's font height */
-	(currentTime.day()<10)  ?  display.print( "0" + (String)currentTime.day() + " / " )  :  display.print( (String)currentTime.day() + " / " );
+	display.setCursor(0, 32+3);		/* 32 is number's font height */
+	(currentTime.day()<10)  ?  display.print( "0" + (String)currentTime.day() + "/" )  :  display.print( (String)currentTime.day() + "/" );
     (currentTime.month()<10)  ?  display.print( "0"+(String)currentTime.month() )       :  display.print( (String)currentTime.month() );
     
-	//WEEK
+	//DoWEEK
     display.setFreeFont(&URW_Gothic_L_Book_28);
     display.print("  "+ (String) daysOfTheWeek[currentTime.dayOfTheWeek()]);
 
 	//Clock position
-	display.setFreeFont(&URW_Gothic_L_Book_75);
+	display.setFreeFont(&URW_Gothic_L_Book_77);
 	int text_w = display.textWidth("00:00");
-	display.setCursor( display.width() - text_w -1, 57+2 );	/* 57 is number max height for this font and size */
+	display.setCursor( display.width() - text_w, 57+2 );	/* 57 is number max height for this font and size */
 	//CLOCK
 	(currentTime.hour()<10)  ?  display.print( "0" + (String)currentTime.hour() )  :  display.print( (String)currentTime.hour() );
     display.print(":");
@@ -280,79 +306,89 @@ void displayToScreen(){
 	/*--------------------------------- SENSOR DATA ------------------------------------------*/
     //Right alignment
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-    const short right_offset = display.textWidth("00.0%rH");
+    const short right_offset = display.textWidth("00.0%rH");    /* The widest string */
     
-    //OUT - pressure
+    //out - Pressure
     display.setFreeFont(&URW_Gothic_L_Book_28);
-    display.setCursor(display.getCursorX() + forecast_w + 10, display.getCursorY() + 41);
-	display.setTextColor(0x0451);
-    display.println((int) pressure_ext + " hPa");
-
-    //AIR QUALITY
-    display.setCursor(forecast_w + 10, display.getCursorY() + 2);
-    display.setTextColor(TFT_LIGHTGREY);
-    display.println( (String)(int)airTVOC + " ppm tVOC - "+ airQualityIndex);
+    display.setCursor(display.getCursorX() + forecast_w + 15, display.getCursorY() + 41);
+	display.setTextColor(0xAE3F);
+    display.println( (String)(int)pressure_ext + " hPa");
 
     //HEAT INDEX
-    display.setTextColor(TFT_YELLOW);
-    display.print("H.I:  " + (String)(int)heatIndex + "'C -> " + (String) heatIndexLevel);
+    display.setCursor(forecast_w + 15, display.getCursorY() + 2);
+    display.setTextColor(0xE6B1);
+    display.println("H.I  " + (String)(int)heatIndex + "'C -> " + (String) heatIndexLevel);
+
+    //AIR QUALITY
+    display.setTextColor(0x94B2);
+    display.print( (String)(int)airTVOC + " ppm tVOC -> "+ airQualityIndex);
 
     //IN tag
-    display.setFreeFont(&URW_Gothic_L_Book_28);
+    display.println();  //needed if removing this tag
+    /*display.setFreeFont(&URW_Gothic_L_Book_28);
     display.setTextColor(TFT_WHITE);
-    display.setCursor(display.width()-right_offset, display.getCursorY());
-    display.println("- IN -");
+    display.setCursor(display.width() - (right_offset/2) - (display.textWidth("- IN -")/2), display.getCursorY());
+    display.println("- IN -");*/
 
-    //OUT - temp
+    //out - Temp
 	display.setCursor(1, display.getCursorY() + 25);    //light Y offset
 	display.setTextColor(0xF9E7);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.print(temp_ext, 1);
 	display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.print(" 'C");
-    //IN
+    //in
     display.setFreeFont(&URW_Gothic_L_Book_41);
     display.setCursor(display.width()-right_offset, display.getCursorY());
     display.print(temp,1);
     display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.println(" 'C");
 
-    //OUT - humidity
+    //out - Humidity
 	display.setCursor(1, display.getCursorY() + 5);
-	display.setTextColor(0x43B9);
+	display.setTextColor(0x3B7F);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.print(humidity_ext, 1);
 	display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.print(" %rH");
-    //IN
+    //in
     display.setFreeFont(&URW_Gothic_L_Book_41);
     display.setCursor(display.width()-right_offset, display.getCursorY());
     display.print(humidity,1);
     display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.println(" %rH");
 
-    //OUT - voltage
+    //out - Voltage
 	display.setCursor(1, display.getCursorY() + 5);
 	display.setTextColor(0x4CA8);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.print((String)vPercent_ext + "%   " + (String)voltage_ext);
 	display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.print("V");
-    //IN
-    display.setCursor(display.width()-display.textWidth("0.00V"), display.getCursorY());
+    //in
+    display.setCursor(display.width()-display.textWidth("0.00V") - 3, display.getCursorY());
     display.print((String)voltage);
 	display.println("V");
+
+    display.drawFastVLine( display.width()/2, (display.height()/1.55F), (display.height()/1.55F), 0x94B2);
+
+    display.endWrite();
 }
 
 
+static const unsigned short TIME_TO_SLEEP = 4 *1000U;
 void loop() {
-
-    readBattery();
-    getTime();
+    currentTime = rtc.now();
     ambientMeasurement();
-    //getExtSensor();
-    //printToSerial();
-    displayToScreen();
+    readBattery();
 
-    delay(3000);
+    /*unsigned long currentMillis = millis(); 
+    if(currentMillis - previousMillis >= (TIME_TO_NEXT_HTTP - TIME_TO_SLEEP - 1000U)){  //Turns on AP 1s before ext_station wakes from sleep.
+        startAsyncServer();
+        previousMillis = currentMillis;
+    }*/
+    printToSerial();
+    displayToScreen();
+    
+    delay(TIME_TO_SLEEP);   /** Low display intensities not working with light_sleep */
 }
