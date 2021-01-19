@@ -11,7 +11,11 @@
         "memory": "cpp",
         "random": "cpp",
         "initializer_list": "cpp",
-        "regex": "cpp"
+        "regex": "cpp",
+        "istream": "cpp",
+        "sstream": "cpp",
+        "streambuf": "cpp",
+        "typeinfo": "cpp"
     },
     "C_Cpp.errorSquiggles": "Enabled"
 }

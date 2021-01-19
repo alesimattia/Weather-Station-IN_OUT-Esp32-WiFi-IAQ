@@ -2,6 +2,7 @@
 #include <User_Setup_Select.h>
 #include <User_Setup.h>
 #include <Custom_font.h>
+#include <Esp.h>
 
 #include <Wire.h>
 
@@ -12,9 +13,7 @@
 #include <DHT.h> //heat-index
 
 #include <WiFi.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
-AsyncWebServer server(80);
+#include <esp_now.h>
 
 #define ESP8266     /**Better to have for some libraries */
 
@@ -29,7 +28,11 @@ static const byte batt_in = 34;
 /*---------------------------- Variabili globali ------------------------*/
 static const char * AP_SSID = "ESP-WeatherStation";
 static const char * AP_PASS = "esp32station";
+static const IPAddress staticIP(192,168,4,1);
+static const IPAddress gateway(192,168,4,1);
+static const IPAddress subnet(255,255,255,0);
 static const unsigned long TIME_TO_NEXT_HTTP = 1 *10U *1000U;  //Minutes converted in milliseconds
+static const unsigned int TIME_TO_LISTEN_HTTP = 60 *1000U;
 unsigned long previousMillis = 0;
 
 static const uint8_t screen_pwm_channel = 0;
@@ -58,19 +61,23 @@ static const char airCondition[6][11] = {"Healthy", "Acceptable", "Not-Good", "B
 /**  External sensor data may not be available --> initialised to NULL**/
 float voltage;
 int vPercent;
-float voltage_ext = NULL;
 int vPercent_ext = NULL;
 
 float temp;
-float temp_ext = NULL;
 float humidity;
-float humidity_ext = NULL;
 float pressure;
-float pressure_ext = NULL;
+
+typedef struct data_struct {
+  float voltage_ext = NULL;
+  float temp_ext = NULL;
+  float humidity_ext = NULL;
+  float pressure_ext = NULL;
+  float airTVOC = NULL;
+} data_struct;
+data_struct sensorData;
 
 float heatIndex;
 String heatIndexLevel ="NULL";
-float airTVOC = NULL;
 String airQualityIndex = airCondition[0];
 
 
@@ -114,34 +121,18 @@ void setup() {
     display.setSwapBytes(true); /* Endianess */
 	display.setRotation('3');
 	display.setTextSize(1);
+    
 
-
-
-    /*-------------------------------------ASYNC WEB SERVER test----------------------------*/
-    WiFi.mode(WIFI_MODE_AP);
+    /*------------------------- ESP-NOW-------------------------*/
+    WiFi.enableSTA(true);
     WiFi.persistent(false);
-    WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 2);   /** Channel 1*/
-    Serial.println( WiFi.softAPIP().toString() + " MAC for BSSID: " + WiFi.macAddress() );
-
-    /*---------------------------- HTTP requests ---------------------------*/
-    server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
-
-        if (request->hasParam("temp") && request->hasParam("hum") && request->hasParam("press") &&
-            request->hasParam("airIndex") && request->hasParam("volt") 
-            ){
-                temp_ext = request->getParam("temp")->value().toFloat();
-                humidity_ext = request->getParam("hum")->value().toFloat();
-                pressure_ext = request->getParam("press")->value().toFloat();
-                airTVOC = request->getParam("airIndex")->value().toFloat();
-                    //airQualityIndex = getAirCondition(airTVOC);
-                voltage_ext = request->getParam("volt")->value().toFloat();
-                    vPercent_ext = battPercentage(voltage_ext);
-        }
-        else    Serial.println("Bad URL");
-
-        request->send(200,"text/plain", (String)TIME_TO_NEXT_HTTP);
-    });
-    server.begin();
+    Serial.println("\n" + WiFi.macAddress());
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("Error initializing ESP-NOW");
+        return;
+    }
+    else Serial.println("ESP-NOW listening");
+    esp_now_register_recv_cb(OnDataRecv);
 }
 
 
@@ -198,45 +189,37 @@ void ambientMeasurement() {
 }
 
 
-void startAsyncServer(){
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  memcpy(&sensorData, incomingData, sizeof(sensorData));
+  Serial.print("Data received from: ");
+  for (int i = 0; i < 6; i++) {
+     Serial.print(mac[i], HEX);
+     Serial.print(":");
+    }
+    Serial.println();
+}
 
-    WiFi.mode(WIFI_MODE_AP);
-    WiFi.persistent(false);
-    WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 2);   /** Channel 1*/
-    Serial.println( WiFi.softAPIP().toString() + " MAC for BSSID: " + WiFi.macAddress() );
 
-    /*---------------------------- HTTP requests ---------------------------*/
-    server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
+void getExtSensor(){
+
+   
+    /*server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
 
         if (request->hasParam("temp") && request->hasParam("hum") && request->hasParam("press") &&
             request->hasParam("airIndex") && request->hasParam("volt") 
             ){
-                temp_ext = request->getParam("temp")->value().toFloat();
-                humidity_ext = request->getParam("hum")->value().toFloat();
-                pressure_ext = request->getParam("press")->value().toFloat();
-                airTVOC = request->getParam("airIndex")->value().toFloat();
+                Serial.println("Incoming http call - Data received");
+                sensorData.temp_ext = request->getParam("temp")->value().toFloat();
+                sensorData.humidity_ext = request->getParam("hum")->value().toFloat();
+                sensorData.pressure_ext = request->getParam("press")->value().toFloat();
+                sensorData.airTVOC = request->getParam("airIndex")->value().toFloat();
                     //airQualityIndex = getAirCondition(airTVOC);
-                voltage_ext = request->getParam("volt")->value().toFloat();
-                    vPercent_ext = battPercentage(voltage_ext);
+                sensorData.voltage_ext = request->getParam("volt")->value().toFloat();
+                    vPercent_ext = battPercentage(sensorData.voltage_ext);
         }
-        else    Serial.println("Bad URL");
-
+        else    Serial.println("Bad /update URL from http call");
         request->send(200,"text/plain", (String)TIME_TO_NEXT_HTTP);
-    });
-    server.begin();
-
-    unsigned int retries = 0;
-    while( WiFi.softAPgetStationNum() != 0 || retries<3000){    //Small window to listen for http requests.
-        retries++; 
-        delay(1);
-    }
-
-    if(retries >= 3000)
-        Serial.println("NO device connected.\n");
-    else    
-        Serial.println("Device has connected!\n.");
-
-    WiFi.softAPdisconnect(true); /**Includes WIFI radio shut-down */
+    });*/
 }
 
 
@@ -253,16 +236,17 @@ void printToSerial() {
     Serial.println("Temperature BMP: " + (String) temp + " °C");
     Serial.println("Temperature HDC: " + (String) hdc.readTemperature() + " °C");
     Serial.println("Temperature RTC: " + (String) rtc.getTemperature() + " °C");
+    Serial.println("Temperature CPU: "+ (String)temperatureRead() );
     Serial.println("Pressure: " + (String) pressure + " hPa");
     Serial.println("Humidity: " + (String) humidity + " %RH");
     Serial.println("Heat Index: " + (String) heatIndex + "\t" + heatIndexLevel);
     Serial.println();
     /*--------------------------------------------------------------------------------*/
-    Serial.println("EXT_Voltage: " + (String) voltage_ext + " V\t" + (String) vPercent_ext + "%");
-    Serial.println("EXT_Temperature: " + (String) temp_ext + " °C");
-    Serial.println("EXT_Pressure: " + (String) pressure_ext + " hPa");
-    Serial.println("EXT_Humidity: " + (String) humidity_ext + " %RH");
-    Serial.println("Air Quality: " + (String) airTVOC + " ppm");
+    Serial.println("EXT_Voltage: " + (String) sensorData.voltage_ext + " V\t" + (String) vPercent_ext + "%");
+    Serial.println("EXT_Temperature: " + (String) sensorData.temp_ext + " °C");
+    Serial.println("EXT_Pressure: " + (String) sensorData.pressure_ext + " hPa");
+    Serial.println("EXT_Humidity: " + (String) sensorData.humidity_ext + " %RH");
+    Serial.println("Air Quality: " + (String) sensorData.airTVOC + " ppm");
     Serial.println("-----------------------------------------");
 }
 
@@ -273,7 +257,7 @@ void displayToScreen(){
          ledcWrite(screen_pwm_channel, 20);
     else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 7) )
          ledcWrite(screen_pwm_channel, 2);
-    else ledcWrite(screen_pwm_channel, 220);    /* 8:00-20:00 */
+    else ledcWrite(screen_pwm_channel, 200);    /* 8:00-20:00 */
 
     display.fillScreen(TFT_BLACK);
 	display.setTextColor(TFT_WHITE);
@@ -312,7 +296,7 @@ void displayToScreen(){
     display.setFreeFont(&URW_Gothic_L_Book_28);
     display.setCursor(display.getCursorX() + forecast_w + 15, display.getCursorY() + 41);
 	display.setTextColor(0xAE3F);
-    display.println( (String)(int)pressure_ext + " hPa");
+    display.println( (String)(int)sensorData.pressure_ext + " hPa");
 
     //HEAT INDEX
     display.setCursor(forecast_w + 15, display.getCursorY() + 2);
@@ -321,7 +305,7 @@ void displayToScreen(){
 
     //AIR QUALITY
     display.setTextColor(0x94B2);
-    display.print( (String)(int)airTVOC + " ppm tVOC -> "+ airQualityIndex);
+    display.print( (String)(int)sensorData.airTVOC + " ppm tVOC -> "+ airQualityIndex);
 
     //IN tag
     display.println();  //needed if removing this tag
@@ -334,7 +318,7 @@ void displayToScreen(){
 	display.setCursor(1, display.getCursorY() + 25);    //light Y offset
 	display.setTextColor(0xF9E7);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-	display.print(temp_ext, 1);
+	display.print(sensorData.temp_ext, 1);
 	display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.print(" 'C");
     //in
@@ -348,7 +332,7 @@ void displayToScreen(){
 	display.setCursor(1, display.getCursorY() + 5);
 	display.setTextColor(0x3B7F);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-	display.print(humidity_ext, 1);
+	display.print(sensorData.humidity_ext, 1);
 	display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.print(" %rH");
     //in
@@ -362,7 +346,7 @@ void displayToScreen(){
 	display.setCursor(1, display.getCursorY() + 5);
 	display.setTextColor(0x4CA8);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-	display.print((String)vPercent_ext + "%   " + (String)voltage_ext);
+	display.print((String)vPercent_ext + "%   " + (String)sensorData.voltage_ext);
 	display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.print("V");
     //in
@@ -376,17 +360,20 @@ void displayToScreen(){
 }
 
 
-static const unsigned short TIME_TO_SLEEP = 4 *1000U;
+static const unsigned short TIME_TO_SLEEP = 3 *1000U;
 void loop() {
-    currentTime = rtc.now();
-    ambientMeasurement();
-    readBattery();
 
+    readBattery();
+    ambientMeasurement();
+    currentTime = rtc.now();
+
+    getExtSensor();
     /*unsigned long currentMillis = millis(); 
     if(currentMillis - previousMillis >= (TIME_TO_NEXT_HTTP - TIME_TO_SLEEP - 1000U)){  //Turns on AP 1s before ext_station wakes from sleep.
         startAsyncServer();
         previousMillis = currentMillis;
     }*/
+    
     printToSerial();
     displayToScreen();
     

@@ -3,28 +3,29 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME680.h>
+
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
+#include <espnow.h>
 
 #define ESP8266
 
-static unsigned long TIME_TO_NEXT_SENDING = 1000;   /** Override from HTTP response payload */
+static unsigned long TIME_TO_NEXT_SENDING = 3000;   /** Override from HTTP response payload */
 
-static const char * SSID = "ESP-WeatherStation";
-static const char * PASS = "esp32station";
-static const uint8_t bssid[] = {0x30, 0xAE ,0xA4,0x98,0x83,0xB8}; /** In AP call WiFi.macAddress() -- "30:AE:A4:98:83:B8" */
-static const IPAddress staticIP(192,168,4,2);
-static const IPAddress gateway(192,168,4,1);
-static const IPAddress subnet(255,255,255,0);
+//static const char * SSID = "ESP-WeatherStation";
+//static const char * PASS = "esp32station";
+u8 receiverAddress[] = {0x30, 0xAE, 0xA4, 0x98, 0x83, 0xB8}; /** In AP call WiFi.macAddress() -- "30:AE:A4:98:83:B8" */
 
 Adafruit_BME680 bme;
 //Bsec util;
 
-float voltage_ext;
-float temp_ext;
-float humidity_ext;
-float pressure_ext;
-float airIndex = 0;
+typedef struct data_struct {
+  float voltage_ext;
+  float temp_ext;
+  float humidity_ext;
+  float pressure_ext;
+  float airTVOC = 0;
+} data_struct;
+data_struct sensorData;
 
 
 void setup() {
@@ -34,7 +35,7 @@ void setup() {
 
     system_deep_sleep_set_option(0);
 
-    pinMode(2, OUTPUT);
+    /*pinMode(2, OUTPUT);
     digitalWrite(2,HIGH); /*Turn off built-in led */
     
     Serial.begin(115200);   //Will be removed for 'production' to save battery
@@ -61,10 +62,10 @@ void setup() {
 //Only for testing (serial output) --> will be removed in 'production'
 void ambientMeasurement() {
     bme.performReading();
-    temp_ext = bme.temperature;
-    pressure_ext = bme.pressure / 100.0;
-    humidity_ext = bme.humidity;
-    airIndex = bme.gas_resistance / 1000.0;
+    sensorData.temp_ext = bme.temperature;
+    sensorData.pressure_ext= bme.pressure / 100.0;
+    sensorData.humidity_ext = bme.humidity;
+    sensorData.airTVOC = bme.gas_resistance / 1000.0;
 
     /*while (! util.run()) { // If no data is available
         Serial.println("BSEC calculations not ready");
@@ -93,63 +94,56 @@ float readBattery() {
 
     //res_to_batt = 1.00 MOhm
     //res_in_gnd = 240.50 kOhm
-    return voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 ;
+    return sensorData.voltage_ext = (voltage_reading / nReadings) * 3.3 / 1024 ;
+}
+
+
+void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
+  if (sendStatus == 0)  
+    Serial.println("Data sent correctly");
+  else  Serial.println("Delivery fail");
+
+  esp_now_unregister_recv_cb();
+  esp_now_unregister_send_cb();
+  esp_now_deinit();
+  //WiFi.disconnect(true); delay(1); /**Includes wifi radio shut-down */
 }
 
 
 void sendData(){
 
-  WiFi.forceSleepWake();   delay(1);
+  WiFi.forceSleepWake();  delay(1);
   /** Avoid saving network connection information to flash, 
    * and then reading back when it next starts the WIFI */
-  WiFi.persistent(false);   
-  WiFi.mode(WIFI_STA);  
-  //WiFi.config(staticIP, gateway, subnet);
-  //WiFi.begin(SSID, PASS, 1, bssid, true);  /** Faster with BSSID + channel*/
-  WiFi.begin(SSID, PASS);
-  
-  byte retries = 0;
-  while( WiFi.status() != WL_CONNECTED && retries<200 ){ 
-    retries++;
-    delay(10);
-  }
-  if(retries = 200 && WiFi.status() == WL_DISCONNECTED){
-    WiFi.disconnect(true); delay( 1 );
-    WiFi.mode(WIFI_OFF);
-    Serial.println("No access point.");
+  //WiFi.persistent(false); 
+  if(!WiFi.mode(WIFI_STA))
+    Serial.println("Error during Wifi switch-on");
+  //WiFi.setOutputPower(20);
+
+  if (esp_now_init() != 0) {
+    Serial.println("Error initializing ESP-NOW");
     return;
   }
-    
-  HTTPClient http;
-  /**GET requests with data in the query string
-   * Hardcoded domain url for less power consumption 
-   **/
-  http.begin((String)"192.168.4.1/update" + "?temp=" + (String)temp_ext + "&hum=" + (String)humidity_ext + "&press=" + (String)pressure_ext
-                                          + "&airIndex=" + (String)airIndex + "&volt=" + (String)voltage_ext);  
-  if( http.GET() == 200){
-    TIME_TO_NEXT_SENDING = (unsigned long) http.getString().toFloat();  /**Need 32bit variable */
-    Serial.println("Data sent correctly");
-    Serial.println("Server told me to sleep for: " + (String)(TIME_TO_NEXT_SENDING/1000U) + "s");
-  }
-  else  Serial.println("Error sending data");
-  
-  http.end();
-  
-  WiFi.disconnect(true); delay(1);
-  WiFi.mode(WIFI_OFF);
+  esp_now_set_self_role(ESP_NOW_ROLE_CONTROLLER);
+  esp_now_add_peer(receiverAddress, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
+  esp_now_register_send_cb(OnDataSent);   /** Callback function */
+  esp_now_send(NULL, (uint8_t *) &sensorData, sizeof(sensorData));
+
+  /*http.begin((String)"192.168.4.1/update" + "?temp=" + (String)temp_ext + "&hum=" + (String)humidity_ext + "&press=" + (String)pressure_ext
+                                          + "&airTVOC=" + (String)airTVOC + "&volt=" + (String)voltage_ext);  */
 }
 
 
 void printToSerial() {
     /*--------------------------------------------------------------------------------*/
     Serial.print("Voltage: ");
-    Serial.print(voltage_ext, 4);
+    Serial.print(sensorData.voltage_ext, 4);
     Serial.println("V");
     /*--------------------------------------------------------------------------------*/
-    Serial.println("Temperature: " + (String) temp_ext + " °C");
-    Serial.println("Pressure: " + (String) pressure_ext + " hPa");
-    Serial.println("Humidity: " + (String) humidity_ext + " %RH");
-    Serial.println("Air Index: " + (String) airIndex + " KOhms");
+    Serial.println("Temperature: " + (String) sensorData.temp_ext + " °C");
+    Serial.println("Pressure: " + (String) sensorData.pressure_ext + " hPa");
+    Serial.println("Humidity: " + (String) sensorData.humidity_ext + " %RH");
+    Serial.println("Air Index: " + (String) sensorData.airTVOC + " KOhms");
     Serial.println("");
     Serial.println("----------------------------------------");
     /*--------------------------------------------------------------------------------*/
@@ -181,12 +175,9 @@ void loop() {
     ambientMeasurement();
     readBattery();
     printToSerial();
-    while(TIME_TO_NEXT_SENDING == 1000){  //Syncs first time to weather-station
-      sendData();
-      delay(1000);
-    }
     sendData();
 
-    ESP.deepSleep(TIME_TO_NEXT_SENDING *1000U, WAKE_RF_DISABLED);  //Minutes expressed in milliseconds converted to microseconds
+    delay(TIME_TO_NEXT_SENDING);
+    //ESP.deepSleep(TIME_TO_NEXT_SENDING *1000U, WAKE_RF_DISABLED);  //Minutes expressed in milliseconds converted to microseconds
     delay(1); /*Needed for proper sleeping*/
 }
