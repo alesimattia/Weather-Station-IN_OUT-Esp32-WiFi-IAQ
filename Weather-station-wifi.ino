@@ -2,7 +2,6 @@
 #include <User_Setup_Select.h>
 #include <User_Setup.h>
 #include <Custom_font.h>
-#include <Esp.h>
 
 #include <Wire.h>
 
@@ -26,14 +25,10 @@ DHT util = DHT(NULL,DHT22); //just for heat-index
 static const byte batt_in = 34;
 
 /*---------------------------- Variabili globali ------------------------*/
-static const char * AP_SSID = "ESP-WeatherStation";
-static const char * AP_PASS = "esp32station";
-static const IPAddress staticIP(192,168,4,1);
-static const IPAddress gateway(192,168,4,1);
-static const IPAddress subnet(255,255,255,0);
-static const unsigned long TIME_TO_NEXT_HTTP = 1 *10U *1000U;  //Minutes converted in milliseconds
-static const unsigned int TIME_TO_LISTEN_HTTP = 60 *1000U;
+static const unsigned long TIME_TO_NEXT = 1 *10U *1000U;  //Minutes converted in milliseconds
+static const unsigned int TIME_TO_LISTEN = 60 *1000U;
 unsigned long previousMillis = 0;
+unsigned short received = 3;
 
 static const uint8_t screen_pwm_channel = 0;
 static const uint8_t screen_led = 16;
@@ -83,8 +78,7 @@ String airQualityIndex = airCondition[0];
 
 
 void setup() {
-    /** Disabling WiFi when waking up */
-    WiFi.mode(WIFI_OFF); delay(1);
+    /** Disabling Radio when waking up */
     btStop(); delay(1);
 
     Serial.begin(115200);
@@ -102,6 +96,7 @@ void setup() {
     bmp.reset();
     if (!bmp.begin(0x76))   Serial.println("Couldn't find BMP");
     delay(2);   /** Start-up time*/
+    
     /** Weather/Climate-monitor  Calibration */
     bmp.setSampling(Adafruit_BMP280::MODE_FORCED, 
                     Adafruit_BMP280::SAMPLING_X1, // temperature 
@@ -126,21 +121,20 @@ void setup() {
     /*------------------------- ESP-NOW-------------------------*/
     WiFi.enableSTA(true);
     WiFi.persistent(false);
-    Serial.println("\n" + WiFi.macAddress());
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+
+    Serial.println("\nMy espNOW address: " + WiFi.macAddress());
     if (esp_now_init() != ESP_OK) {
         Serial.println("Error initializing ESP-NOW");
         return;
     }
-    else Serial.println("ESP-NOW listening");
-    esp_now_register_recv_cb(OnDataRecv);
+    else Serial.println("ESP-NOW listening\n");
+    esp_now_register_recv_cb(onReceive);
 }
 
 
+//vPercent = map(voltage, 3.20 , 4.20, 0, 100); not working?! 
 int battPercentage(float v) {
-    /** Map seems to not work   vPercent = map(voltage, 3.20 , 4.20, 0, 100);
-     * Minimum voltage 3.2V (as 0%)
-     * Maximum voltage 4.2V (100%)
-     */
     const float battMin = 3.2;
     const float battMax = 4.2;  
     if (v >= battMin)
@@ -148,9 +142,7 @@ int battPercentage(float v) {
     else return 0;
 }
 
-
 void readBattery() {
-
     const byte nReadings = 64;
     float voltage_reading = 0;
 
@@ -158,13 +150,7 @@ void readBattery() {
     for (byte x = 0; x < nReadings; x++)
         voltage_reading += analogRead(batt_in);
 
-    /** 5.1 maximum voltage to measure (USB)
-     * r1 (to device) 1Mohm --- r2 (to gnd) 1Mohm
-     * In case of not equal resistors the read value 
-     * is scaled down by a factor of  r2/(r1+r2)
-     * so multiply per 1/attenuation (now 2)
-     */
-    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2.275;
+    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2.275;   //Sperimental attenuation of 2.275
     vPercent = battPercentage(voltage);
 }
 
@@ -189,37 +175,17 @@ void ambientMeasurement() {
 }
 
 
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-  memcpy(&sensorData, incomingData, sizeof(sensorData));
-  Serial.print("Data received from: ");
-  for (int i = 0; i < 6; i++) {
-     Serial.print(mac[i], HEX);
-     Serial.print(":");
+void onReceive(const uint8_t * mac, const uint8_t *incomingData, int len) {
+    memcpy(&sensorData, incomingData, sizeof(sensorData));
+    Serial.print("Data received from: ");
+    for (int i = 0; i < 6; i++) {
+        Serial.print(mac[i], HEX);
+        Serial.print(":");
     }
-    Serial.println();
-}
-
-
-void getExtSensor(){
-
-   
-    /*server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
-
-        if (request->hasParam("temp") && request->hasParam("hum") && request->hasParam("press") &&
-            request->hasParam("airIndex") && request->hasParam("volt") 
-            ){
-                Serial.println("Incoming http call - Data received");
-                sensorData.temp_ext = request->getParam("temp")->value().toFloat();
-                sensorData.humidity_ext = request->getParam("hum")->value().toFloat();
-                sensorData.pressure_ext = request->getParam("press")->value().toFloat();
-                sensorData.airTVOC = request->getParam("airIndex")->value().toFloat();
-                    //airQualityIndex = getAirCondition(airTVOC);
-                sensorData.voltage_ext = request->getParam("volt")->value().toFloat();
-                    vPercent_ext = battPercentage(sensorData.voltage_ext);
-        }
-        else    Serial.println("Bad /update URL from http call");
-        request->send(200,"text/plain", (String)TIME_TO_NEXT_HTTP);
-    });*/
+    Serial.println("\n********************");
+    
+    vPercent_ext = battPercentage(sensorData.voltage_ext);
+    received = 3;
 }
 
 
@@ -247,7 +213,7 @@ void printToSerial() {
     Serial.println("EXT_Pressure: " + (String) sensorData.pressure_ext + " hPa");
     Serial.println("EXT_Humidity: " + (String) sensorData.humidity_ext + " %RH");
     Serial.println("Air Quality: " + (String) sensorData.airTVOC + " ppm");
-    Serial.println("-----------------------------------------");
+    Serial.println("------------------------------------\n");
 }
 
 
@@ -362,18 +328,22 @@ void displayToScreen(){
 
 static const unsigned short TIME_TO_SLEEP = 3 *1000U;
 void loop() {
+    received--;
 
     readBattery();
     ambientMeasurement();
     currentTime = rtc.now();
 
-    getExtSensor();
     /*unsigned long currentMillis = millis(); 
     if(currentMillis - previousMillis >= (TIME_TO_NEXT_HTTP - TIME_TO_SLEEP - 1000U)){  //Turns on AP 1s before ext_station wakes from sleep.
-        startAsyncServer();
+        getExtSensor();
         previousMillis = currentMillis;
     }*/
-    
+
+    if(received == 0){   /** Otherways data are overwritten */
+        memset(&sensorData, 0, sizeof(sensorData) ); /** Clear old ext_sensor data */
+        vPercent_ext = 0;
+    }
     printToSerial();
     displayToScreen();
     

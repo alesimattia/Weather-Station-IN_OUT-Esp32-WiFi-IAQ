@@ -117,4 +117,23 @@ Adafruit_GFX::setTextColor( Adafruit_GFX::color565(255,255,255)
 
 ## Battery measurement
 
+
+/** 5.1 maximum voltage to measure (USB)
+ * Voltage divider resistors are tuned for this.
+ * Calculations are based on applying: 
+ * res_to_bat-->(1M Ohm) -- res_to_gnd-->(1M Ohm)
+ * Thus the readings are attenuated down by a factor of  
+ * r2/(r1+r2) so multiply what red per 1/attenuation 
+ *My charging circuit: (Max-4.2V)(Min-3.2)
+    
+    //res_to_batt = 1.00 MOhm
+    //res_in_gnd = 240.50 kOhm
+*/
+
+
+    /** Map seems to not work   vPercent = map(voltage, 3.20 , 4.20, 0, 100);
+     * Minimum voltage 3.2V (as 0%)
+     * Maximum voltage 4.2V (100%)
+     */
+
 ## External ESP sensor
