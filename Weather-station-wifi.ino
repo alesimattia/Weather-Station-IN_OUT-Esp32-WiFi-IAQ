@@ -1,5 +1,4 @@
 #include <TFT_eSPI.h>
-#include <User_Setup_Select.h>
 #include <User_Setup.h>
 #include <Custom_font.h>
 
@@ -22,13 +21,14 @@ Adafruit_BMP280 bmp = Adafruit_BMP280();
 Adafruit_HDC1000 hdc = Adafruit_HDC1000();
 DHT util = DHT(NULL,DHT22); //just for heat-index
 
-static const byte batt_in = 34;
+static const byte batt_in = 34U;
 
 /*---------------------------- Variabili globali ------------------------*/
-static const unsigned long TIME_TO_NEXT = 1 *10U *1000U;  //Minutes converted in milliseconds
+static const unsigned long TIME_TO_NEXT = 1 *60U *1000U;  //Minutes converted in milliseconds
 static const unsigned int TIME_TO_LISTEN = 60 *1000U;
+const unsigned int TIME_TO_SLEEP = 10 *1000U;
 unsigned long previousMillis = 0;
-unsigned short received = 3;
+unsigned short call_miss = 0;    /** After two ext_sensor data missing, writes 0 on the struct*/
 
 static const uint8_t screen_pwm_channel = 0;
 static const uint8_t screen_led = 16;
@@ -118,12 +118,13 @@ void setup() {
 	display.setTextSize(1);
     
 
-    /*------------------------- ESP-NOW-------------------------*/
+    /*------------------------- ESP-NOW (ext_sensor)-------------------------*/
     WiFi.enableSTA(true);
     WiFi.persistent(false);
-    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    if(WiFi.setTxPower(WIFI_POWER_20_5dBm) == 0)
+        Serial.println("Wifi Power mode set correctly");
 
-    Serial.println("\nMy espNOW address: " + WiFi.macAddress());
+    //Serial.println("\nMy espNOW address: " + WiFi.macAddress());
     if (esp_now_init() != ESP_OK) {
         Serial.println("Error initializing ESP-NOW");
         return;
@@ -133,7 +134,6 @@ void setup() {
 }
 
 
-//vPercent = map(voltage, 3.20 , 4.20, 0, 100); not working?! 
 int battPercentage(float v) {
     const float battMin = 3.2;
     const float battMax = 4.2;  
@@ -142,15 +142,17 @@ int battPercentage(float v) {
     else return 0;
 }
 
+
 void readBattery() {
-    const byte nReadings = 64;
+    const byte nReadings = 40;
     float voltage_reading = 0;
 
     /** Multiple readings to get a stabilised value */
-    for (byte x = 0; x < nReadings; x++)
+    for (byte x = 0; x < nReadings; x++){
         voltage_reading += analogRead(batt_in);
-
-    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2.275;   //Sperimental attenuation of 2.275
+        delay(5);
+    }
+    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2.17F;   //Sperimental attenuation of 2.156
     vPercent = battPercentage(voltage);
 }
 
@@ -158,10 +160,11 @@ void readBattery() {
 void ambientMeasurement() {
    
     bmp.takeForcedMeasurement();    /** Mandatory while in forced mode */
-    temp = bmp.readTemperature();
+    temp = (bmp.readTemperature() - 2.77F);     /** See Calibration.xls */
+    bmp.takeForcedMeasurement();
     pressure = bmp.readPressure() / 100;  //hPa
 
-    humidity = hdc.readHumidity();
+    humidity = (hdc.readHumidity() - 3.14F);
     heatIndex = util.computeHeatIndex(temp, humidity, false);
     
     if(heatIndex < 26)   heatIndexLevel = heatCondition[0];
@@ -182,10 +185,10 @@ void onReceive(const uint8_t * mac, const uint8_t *incomingData, int len) {
         Serial.print(mac[i], HEX);
         Serial.print(":");
     }
-    Serial.println("\n********************");
-    
+    Serial.println("\n***********************\n");
+
     vPercent_ext = battPercentage(sensorData.voltage_ext);
-    received = 3;
+    call_miss = 0;
 }
 
 
@@ -212,7 +215,7 @@ void printToSerial() {
     Serial.println("EXT_Temperature: " + (String) sensorData.temp_ext + " °C");
     Serial.println("EXT_Pressure: " + (String) sensorData.pressure_ext + " hPa");
     Serial.println("EXT_Humidity: " + (String) sensorData.humidity_ext + " %RH");
-    Serial.println("Air Quality: " + (String) sensorData.airTVOC + " ppm");
+    Serial.println("Air Quality: " + (String) sensorData.airTVOC + " KOhm");
     Serial.println("------------------------------------\n");
 }
 
@@ -223,7 +226,7 @@ void displayToScreen(){
          ledcWrite(screen_pwm_channel, 20);
     else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 7) )
          ledcWrite(screen_pwm_channel, 2);
-    else ledcWrite(screen_pwm_channel, 200);    /* 8:00-20:00 */
+    else ledcWrite(screen_pwm_channel, 210);    /* 8:00-20:00 */
 
     display.fillScreen(TFT_BLACK);
 	display.setTextColor(TFT_WHITE);
@@ -271,7 +274,7 @@ void displayToScreen(){
 
     //AIR QUALITY
     display.setTextColor(0x94B2);
-    display.print( (String)(int)sensorData.airTVOC + " ppm tVOC -> "+ airQualityIndex);
+    display.print( (String)(int)sensorData.airTVOC + " KOhm tVOC -> "+ airQualityIndex);
 
     //IN tag
     display.println();  //needed if removing this tag
@@ -320,15 +323,14 @@ void displayToScreen(){
     display.print((String)voltage);
 	display.println("V");
 
-    display.drawFastVLine( display.width()/2, (display.height()/1.55F), (display.height()/1.55F), 0x94B2);
+    display.drawFastVLine( display.width()/2+20, (display.height()/1.55F), (display.height()/1.55F), 0x94B2);
 
     display.endWrite();
 }
 
 
-static const unsigned short TIME_TO_SLEEP = 3 *1000U;
 void loop() {
-    received--;
+    call_miss++;
 
     readBattery();
     ambientMeasurement();
@@ -340,12 +342,14 @@ void loop() {
         previousMillis = currentMillis;
     }*/
 
-    if(received == 0){   /** Otherways data are overwritten */
+    /** Ext_sensor not available or not sending data */
+    if(call_miss >=3){   /** Otherways data are overwritten */
         memset(&sensorData, 0, sizeof(sensorData) ); /** Clear old ext_sensor data */
         vPercent_ext = 0;
+        Serial.println("No ext_sensor found");
     }
+
     printToSerial();
     displayToScreen();
-    
-    delay(TIME_TO_SLEEP);   /** Low display intensities not working with light_sleep */
+    delay(10000);   /** Low display intensities not working with light_sleep */
 }
