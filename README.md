@@ -156,3 +156,4 @@ Will not work. So I implemented a custom voltage-mapping function with lower vol
 The weather station will always be plugged to an Usb power suppy, so it is showing voltage only (and not percentage).
 
 ## External ESP sensor
+// Fixed BSSID and Channel dramatically improves connecting speed from about 3500ms to 1050ms 

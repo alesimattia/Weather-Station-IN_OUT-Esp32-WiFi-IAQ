@@ -11,7 +11,8 @@
 #include <DHT.h> //heat-index
 
 #include <WiFi.h>
-#include <esp_now.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
 
 #define ESP8266     /**Better to have for some libraries */
 
@@ -21,23 +22,30 @@ Adafruit_BMP280 bmp = Adafruit_BMP280();
 Adafruit_HDC1000 hdc = Adafruit_HDC1000();
 DHT util = DHT(NULL,DHT22); //just for heat-index
 
-static const byte batt_in = 34U;
+const byte batt_in = 34U;
 
 /*---------------------------- Variabili globali ------------------------*/
-static const unsigned long TIME_TO_NEXT = 1 *60U *1000U;  //Minutes converted in milliseconds
-static const unsigned int TIME_TO_LISTEN = 60 *1000U;
-const unsigned int TIME_TO_SLEEP = 10 *1000U;
+const unsigned long TIME_TO_NEXT_HTTP = 20;  //Seconds
+const unsigned int TIME_TO_LISTEN = 60 *1000U;
+const unsigned int TIME_TO_SLEEP = 20 *1000U;
 unsigned long previousMillis = 0;
 unsigned short call_miss = 0;    /** After two ext_sensor data missing, writes 0 on the struct*/
 
-static const uint8_t screen_pwm_channel = 0;
-static const uint8_t screen_led = 16;
-static const byte screen_reset = 17;
-static const byte screen_DC = 4;    //Data Command pin
+const char* ssid = "ESP-WeatherStation";
+const char* password = "esp32station";
+IPAddress localIP(192, 168, 4, 1);
+IPAddress gateway(192, 168, 4, 1);
+IPAddress subnet(255, 255, 255, 252);
+AsyncWebServer server(80);
+
+const uint8_t screen_pwm_channel = 0;
+const uint8_t screen_led = 16;
+const byte screen_reset = 17;
+const byte screen_DC = 4;    //Data Command pin
 TFT_eSPI display = TFT_eSPI();
 
 
-static const char daysOfTheWeek[7][12] = {
+const char daysOfTheWeek[7][12] = {
     "Domenica",
     "Lunedi'",
     "Martedi'",
@@ -48,8 +56,8 @@ static const char daysOfTheWeek[7][12] = {
 };
 DateTime currentTime;
 
-static const char heatCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger", "Extreme-Danger"};
-static const char airCondition[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
+const char heatCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger", "Extreme-Danger"};
+const char airCondition[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
 
 
 /*----------------------- Environment data  -------------------------------*/
@@ -67,7 +75,9 @@ typedef struct data_struct {
   float temp_ext = NULL;
   float humidity_ext = NULL;
   float pressure_ext = NULL;
-  float airTVOC = NULL;
+  float TVOC = NULL;
+  float IAQ = NULL;
+  float CO = NULL;
 } data_struct;
 data_struct sensorData;
 
@@ -79,6 +89,7 @@ String airQualityIndex = airCondition[0];
 
 void setup() {
     /** Disabling Radio when waking up */
+    WiFi.disconnect(true, true);
     btStop(); delay(1);
 
     Serial.begin(115200);
@@ -118,25 +129,54 @@ void setup() {
 	display.setTextSize(1);
     
 
-    /*------------------------- ESP-NOW (ext_sensor)-------------------------*/
-    WiFi.enableSTA(true);
+    /*---------------------------- Web server - Access Point -------------------------*/
+    while(! WiFi.enableAP(true) ) 
+        Serial.println("WiFi radio not ready");
+
+    if(! WiFi.config(localIP, gateway, subnet) )
+      Serial.println("AP Failed to configure IP");
+
     WiFi.persistent(false);
-    if(WiFi.setTxPower(WIFI_POWER_20_5dBm) == 0)
+    if(! WiFi.setTxPower(WIFI_POWER_20_5dBm) )
         Serial.println("Wifi Power mode set correctly");
 
-    //Serial.println("\nMy espNOW address: " + WiFi.macAddress());
-    if (esp_now_init() != ESP_OK) {
-        Serial.println("Error initializing ESP-NOW");
-        return;
-    }
-    else Serial.println("ESP-NOW listening\n");
-    esp_now_register_recv_cb(onReceive);
+    while(! WiFi.softAP(ssid, password, 12, 0, 2) )
+        Serial.println("Acccess Point not ready");
+
+    Serial.println("\nAccess Point IP: " + WiFi.softAPIP().toString() + " BSSID: "+WiFi.macAddress());
+
+    server.on("/", HTTP_GET, [] (AsyncWebServerRequest *request) {
+        request->send(200, "text/plain", "Connected to ESP Weather Station" );
+    });
+
+    server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
+        if (request->hasParam("temp") && request->hasParam("hum") && request->hasParam("pres") && 
+            request->hasParam("volt")) {
+            sensorData.temp_ext = request->getParam("temp")->value().toFloat();
+            sensorData.humidity_ext = request->getParam("hum")->value().toFloat();
+            sensorData.pressure_ext = request->getParam("pres")->value().toFloat();
+            sensorData.voltage_ext = request->getParam("volt")->value().toFloat();
+            //sensorData.TVOC = request->getParam("tvoc")->value().toFloat();
+            //sensorData.IAQ = request->getParam("iaq")->value().toFloat();
+            //sensorData.CO = request->getParam("co")->value().toFloat();
+
+            vPercent_ext = battPercentage(sensorData.voltage_ext);
+            call_miss = 0;
+        }
+        else{ 
+            Serial.println("Bad URL request");
+            request->send(200, "text/plain", "Bad URL request");
+        }
+        request->send(200, "text/plain", (String)TIME_TO_NEXT_HTTP );
+        Serial.println("Answered to a client\n");
+    });
+    server.begin();
 }
 
 
 int battPercentage(float v) {
     const float battMin = 3.2;
-    const float battMax = 4.2;  
+    const float battMax = 4.24;  //My charging circuit
     if (v >= battMin)
         return (v - battMin) * 100 / (battMax - battMin);
     else return 0;
@@ -152,7 +192,7 @@ void readBattery() {
         voltage_reading += analogRead(batt_in);
         delay(5);
     }
-    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2.17F;   //Sperimental attenuation of 2.156
+    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2.16F;   //Sperimental attenuation
     vPercent = battPercentage(voltage);
 }
 
@@ -175,20 +215,6 @@ void ambientMeasurement() {
     else if(heatIndex > 41 && heatIndex <= 54)
         heatIndexLevel = heatCondition[3];
     else    heatIndexLevel = heatCondition[3];
-}
-
-
-void onReceive(const uint8_t * mac, const uint8_t *incomingData, int len) {
-    memcpy(&sensorData, incomingData, sizeof(sensorData));
-    Serial.print("Data received from: ");
-    for (int i = 0; i < 6; i++) {
-        Serial.print(mac[i], HEX);
-        Serial.print(":");
-    }
-    Serial.println("\n***********************\n");
-
-    vPercent_ext = battPercentage(sensorData.voltage_ext);
-    call_miss = 0;
 }
 
 
@@ -215,7 +241,7 @@ void printToSerial() {
     Serial.println("EXT_Temperature: " + (String) sensorData.temp_ext + " °C");
     Serial.println("EXT_Pressure: " + (String) sensorData.pressure_ext + " hPa");
     Serial.println("EXT_Humidity: " + (String) sensorData.humidity_ext + " %RH");
-    Serial.println("Air Quality: " + (String) sensorData.airTVOC + " KOhm");
+    Serial.println("Air Quality: " + (String) sensorData.TVOC + " KOhm");
     Serial.println("------------------------------------\n");
 }
 
@@ -226,7 +252,7 @@ void displayToScreen(){
          ledcWrite(screen_pwm_channel, 20);
     else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 7) )
          ledcWrite(screen_pwm_channel, 2);
-    else ledcWrite(screen_pwm_channel, 210);    /* 8:00-20:00 */
+    else ledcWrite(screen_pwm_channel, 220);    /* 8:00-20:00 */
 
     display.fillScreen(TFT_BLACK);
 	display.setTextColor(TFT_WHITE);
@@ -274,7 +300,7 @@ void displayToScreen(){
 
     //AIR QUALITY
     display.setTextColor(0x94B2);
-    display.print( (String)(int)sensorData.airTVOC + " KOhm tVOC -> "+ airQualityIndex);
+    display.print( (String)(int)sensorData.TVOC + " KOhm tVOC -> "+ airQualityIndex);
 
     //IN tag
     display.println();  //needed if removing this tag
@@ -337,7 +363,7 @@ void loop() {
     currentTime = rtc.now();
 
     /*unsigned long currentMillis = millis(); 
-    if(currentMillis - previousMillis >= (TIME_TO_NEXT_HTTP - TIME_TO_SLEEP - 1000U)){  //Turns on AP 1s before ext_station wakes from sleep.
+    if(currentMillis - previousMillis >= (TIME_TO_NEXT_HTTP_HTTP - TIME_TO_SLEEP - 1000U)){  //Turns on AP 1s before ext_station wakes from sleep.
         getExtSensor();
         previousMillis = currentMillis;
     }*/
@@ -346,10 +372,11 @@ void loop() {
     if(call_miss >=3){   /** Otherways data are overwritten */
         memset(&sensorData, 0, sizeof(sensorData) ); /** Clear old ext_sensor data */
         vPercent_ext = 0;
+        call_miss = 3;
         Serial.println("No ext_sensor found");
     }
 
     printToSerial();
     displayToScreen();
-    delay(10000);   /** Low display intensities not working with light_sleep */
+    delay(15000);   /** Low display intensities not working with light_sleep */
 }
