@@ -1,3 +1,4 @@
 .*
 !/.gitignore
 .vscode/arduino.json
+Connect.h

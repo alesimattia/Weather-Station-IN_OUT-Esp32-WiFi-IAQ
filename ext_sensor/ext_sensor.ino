@@ -10,15 +10,16 @@
 
 #define ESP8266
 
-unsigned int TIME_TO_NEXT_SENDING = 30;
+unsigned short TIME_TO_NEXT_SENDING = 60;
 
 const char* ssid = "ESP-WeatherStation";  
 const byte bssid[] = {0x30,0xAE,0xA4,0x98,0x83,0xB9}; /** In AP call WiFi.macAddress() -- "30:AE:A4:98:83:B9" */
 const char* password = "esp32station"; 
+unsigned long conn_time = NULL;
 
-IPAddress localIP(192, 168, 4, 2);
-IPAddress gateway(192, 168, 4, 1);
-IPAddress subnet(255, 255, 255, 252);
+const IPAddress localIP(192, 168, 4, 2);
+const IPAddress gateway(192, 168, 4, 1);
+const IPAddress subnet(255, 255, 255, 252);
 
 Adafruit_BME680 bme;
 
@@ -82,7 +83,7 @@ void ambientMeasurement() {
 	humidity_ext = bme.humidity;
 	airTVOC = bme.gas_resistance / 1000.0;
 
-	voltage_ext = analogRead(A0) * 3.3F / 1024.0F * 4.711F;
+	voltage_ext = analogRead(A0) * 3.3F / 1024.0F * 4.37F;	/** Sperimental offset of 4.37
 	
 	/*Serial.println("\nIAQ: " + String(util.iaq) + "\nAccuracy: " + String(util.iaqAccuracy) 
 				 + "\nStatic-IAQ: " + String(util.staticIaq) +"\nCO2 " + String(util.co2Equivalent)
@@ -128,42 +129,55 @@ void ambientMeasurement() {
 }*/
 
 
+void forceWifiOn(){
+	wifi_fpm_do_wakeup();
+   	wifi_fpm_close();
+   	wifi_set_opmode(STATION_MODE);
+   	wifi_station_connect();
+}
+
+
 void sendData() {
+	forceWifiOn();
 
 	if (!WiFi.forceSleepWake())
 		Serial.println("Can't wake wifi");
 
 	WiFi.persistent(false); /** Improves connection of about 400 millis */
 
-	if (!WiFi.mode(WIFI_STA))
+	if ( !WiFi.mode(WIFI_STA) )
 		Serial.println("Wifi STA not ready");
 
 	WiFi.setPhyMode(WIFI_PHY_MODE_11N);
 	WiFi.setOutputPower(20.5);
 
-	if (!WiFi.config(localIP, gateway, subnet))
+	if ( !WiFi.config(localIP, gateway, subnet) )
 		Serial.println("STA Failed to configure IP");
 
 	unsigned long temp = millis();
-	short retry = 0;
-	WiFi.begin(ssid, password, 12, bssid, true);
+	unsigned short retry = 0;
+	WiFi.begin(ssid, password, 1, bssid, true);
 	while (WiFi.status() != WL_CONNECTED && retry < 2000) {
 		delay(1);
 		retry++;
 	}
-	Serial.println("Retries: " + (String) retry);
-	Serial.println((String)(millis() - temp) + " millis for WIFI connection");
+	conn_time = millis() - temp;
+
+	Serial.println("\nConn.retries in while loop: " + (String) retry);
+	Serial.println((String)conn_time + " millis for WIFI connection");
 
 	if (retry == 2000)
 		Serial.println("Can't connect to AP. Too much retries");
-	else Serial.println("Connected to an AP");
 
 	if (WiFi.status() == WL_CONNECTED) {
 		//Serial.println("My Ip: "+ WiFi.localIP().toString());
+		Serial.println("RSSI: "+ (String) WiFi.RSSI() );
 
 		HTTPClient http;
-		http.begin(String("http://192.168.4.1/update?temp=" + (String) temp_ext + "&hum=" + (String) humidity_ext +
-			"&pres=" + (String) pressure_ext + "&volt=" + (String) voltage_ext));
+		http.begin("http://192.168.4.1/update?temp=" + (String) temp_ext + "&hum=" + (String) humidity_ext +
+					"&pres=" + (String) pressure_ext + "&volt=" + (String) voltage_ext + 
+					"&time=" + (String) conn_time + "&rssi=" + (String) WiFi.RSSI() 
+		);
 		/*if ( http.GET() == 200) {
 		  Serial.println("Server told me to sleep for " + http.getString() + " seconds");
 		  TIME_TO_NEXT_SENDING = http.getString().toInt();
@@ -198,6 +212,6 @@ void loop() {
 	Serial.println("I took: "+ (String)(millis()-start) + " millis. to complete a cycle");
 	Serial.println("\n-----------------------------------------\n");
 
-	ESP.deepSleepInstant(TIME_TO_NEXT_SENDING *1E6, WAKE_RF_DISABLED);
+	ESP.deepSleep(TIME_TO_NEXT_SENDING *1E6, WAKE_RF_DISABLED);
 	delay(1); /*Needed for proper sleeping*/
 }

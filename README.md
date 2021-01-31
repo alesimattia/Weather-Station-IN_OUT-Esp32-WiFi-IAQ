@@ -18,7 +18,7 @@ Furthermore, the movement path of the sun is not the same during an year nor in 
 >
 >Similar argumentation for the wind gusts and direction: very bulky sensor and usually not so relevant (at least in my location).  
 
-<img style="float:center" alt="sun_path" src="./docs/sun_path.jpg" width="55%"/><br><br>
+<img style="float:center" alt="sun_path" src="./docs/img/sun_path.jpg" width="55%"/><br><br>
 
 The core of all is an *ESP-32 Dev.board* but an external wireless "probe", created via an *ESP8266 D1 Mini*, is used to outside ambient surveys.  
 By connecting to its SoftAP wireless network, this smaller control unit will answer to HTTP requests and send sensor data in the payload to the *"master"*.
@@ -67,7 +67,7 @@ Code would even be simpler (and lightweight) with a single ambient sensor.
 
 Portrays the components properties and functions.  
 Even if we are not describing a real object language classes, this diagram gives an **overview** of the components and their interactions.
-![Class diagram](./docs/class_diagram.jpg)
+![Class diagram](./docs/img/class_diagram.jpg)
 
 
 ## Display
@@ -88,7 +88,7 @@ The ***configuration header*** can be found in  [User_Setup.h](./docs/User_Setup
 3. **Touch screen** has not been used: maybe I will implement a touch display-dimming function in the future.  
 4. Display dimming is code-scheduled to reduce eyestrain during the night hours.
 
-<img src="./docs/display_pinout.jpg" width="700">
+<img src="./docs/img/display_pinout.jpg" width="700">
 
 ### Images
 
@@ -139,8 +139,8 @@ An internal voltage divider with 220KOhm and 100KOhm, applied in *A0-ADC* is use
 
     In this case too, we add an external voltage divier to expand the measurable range.
 
-<img src="./docs/voltage_divider_d1Mini.jpg" width="20%" float="left"> &nbsp;&nbsp;&nbsp;
-<img src="./docs/voltage_divider.jpg" width="65%" float="left">
+<img src="./docs/img/voltage_divider_d1Mini.jpg" width="20%" float="left"> &nbsp;&nbsp;&nbsp;
+<img src="./docs/img/voltage_divider.jpg" width="65%" float="left">
 <br><br>
 
 As we can see in the circuit simulator, the effective down-scaling ratio is *(4.2/0.819512 = 5.125)* so we can ***measure up to 3.3V\*5.125 = 16.9V***
