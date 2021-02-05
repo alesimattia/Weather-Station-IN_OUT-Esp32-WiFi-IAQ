@@ -8,7 +8,8 @@
                 "C:\\Users\\Alesi\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\**",
                 "C:\\Users\\Alesi\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\1.0.4\\**",
                 "C:\\Users\\Alesi\\Documents\\Arduino\\libraries\\**",
-                "C:\\Program Files (x86)\\Arduino\\libraries\\**"
+                "C:\\Program Files (x86)\\Arduino\\libraries\\**",
+                "C:\\Users\\Alesi\\Documents\\Arduino\\libraries\\ArduinoJson"
             ],
             "forcedInclude": [],
             "intelliSenseMode": "msvc-x64",

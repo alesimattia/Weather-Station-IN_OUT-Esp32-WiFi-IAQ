@@ -8,7 +8,7 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_HDC1000.h>
-#include <DHT.h> //heat-index
+#include <DHT.h>    //heat-index
 
 #include <WiFi.h>
 #include <AsyncTCP.h>
@@ -16,9 +16,11 @@
 #include <ESPAsyncWebServer.h>
 
 #include <ArduinoJson.h>
-#include "Connect.h"    //Weather api
+#include "Connect.h"    //Weather api parameters
+#include "Weather_icons.h"
 
 #define ESP8266     /**Better to have for some libraries */
+
 
 /*-------------------- Sensori ------------------*/
 RTC_DS3231 rtc;
@@ -31,9 +33,9 @@ const byte batt_in = 34U;
 
 /*-------------------------------------- Variabili globali ---------------------------------------*/
 const unsigned short TIME_TO_NEXT_HTTP = 60;  //Seconds
-const unsigned int TIME_TO_LISTEN = 5;
+//const unsigned int TIME_TO_LISTEN = 5;
 const unsigned int TIME_TO_SLEEP = 30;
-unsigned long previousMillis = 0;
+//unsigned long previousMillis = 0;
 unsigned short call_miss = 0;    /** After 3 ext_sensor data missing, writes 0 on the struct*/
 
 /*---------------- Access point -------------------*/
@@ -46,26 +48,19 @@ AsyncWebServer server(80);
 
 /*---------------- Internet connection ----------------*/
 /** Stored in a private  Connect.h file 
-const char* lan_ssid = "";
-const byte lan_bssid[] = {};
+const byte lan_bssid[] = {0xFF, , , };
 const char* lan_password = "";
+const String API_KEY;
 */
+const char* lan_ssid = "d-Link";
 const IPAddress lan_ip(192, 168, 1, 200);
 const IPAddress lan_gateway(192, 168, 1, 1);
 const IPAddress lan_subnetM(255, 255, 255, 0);
 
-const String lat = "42.826";  //See on Openweathermap.org
-const String lon = "13.691";
+const String lat = "42.826", lon = "13.691";
 const String exlude = "current,daily,minutely,alerts";
 const String queryString ="https://api.openweathermap.org/data/2.5/onecall?lat="+ lat + "&lon=" + lon + 
-                          "&exclude="+ exlude + "&units=metric" + "&lang=it" "&appid=" + API_KEY;
-
-/*---------------- Display pinout ----------------*/
-const uint8_t screen_pwm_channel = 0;
-const uint8_t screen_led = 16;
-const byte screen_reset = 17;
-const byte screen_DC = 4;    //Data Command pin
-TFT_eSPI display = TFT_eSPI();
+                          "&exclude="+ exlude +"&units=metric&lang=it&appid="+ API_KEY;
 
 
 const char daysOfTheWeek[7][12] = {
@@ -81,17 +76,22 @@ DateTime currentTime;
 
 const char heatCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger", "Extreme-Danger"};
 const char airCondition[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
+String forecast = "Sun";
+
+
+/*---------------- Display pinout ----------------*/
+const uint8_t screen_pwm_channel = 0;
+const uint8_t screen_led = 16;
+const uint8_t screen_reset = 17;
+const uint8_t screen_DC = 4;    //Data Command pin
+TFT_eSPI display = TFT_eSPI();
 
 
 /*----------------- Environment data  ----------------*/
 float voltage;
-int vPercent;
-int vPercent_ext = NULL;
+int vPercent, vPercent_ext = NULL;
 
-float temp;
-float humidity;
-float pressure;
-float heatIndex;
+float temp, humidity, pressure, heatIndex;
 String heatIndexLevel ="NULL";
 String airQualityIndex = airCondition[0];
 
@@ -103,7 +103,7 @@ typedef struct data_struct {
   float temp_ext = NULL;
   float humidity_ext = NULL;
   float pressure_ext = NULL;
-  float TVOC = NULL;
+  float TVOC = NULL;    //BSEC_OUTPUT_BREATH_VOC_EQUIVALENT in ppm
   float IAQ = NULL;
   float CO = NULL;
   int rssi = NULL;
@@ -225,7 +225,7 @@ void readBattery() {
 void ambientMeasurement() {
    
     bmp.takeForcedMeasurement();    /** Mandatory while in forced mode */
-    temp = bmp.readTemperature() - 5.42F;     /** See Calibration.xls */
+    temp = bmp.readTemperature() - 5.42F - 1;     /** See Calibration.xls */
     bmp.takeForcedMeasurement();
     pressure = bmp.readPressure() / 100;  //hPa
 
@@ -256,38 +256,48 @@ void getForecast(){
     short retries = 0;
     while(WiFi.status() != WL_CONNECTED && retries < 300){
         retries++;
-        Serial.println("Not connected to router");
-        delay(10);
+        delay(1);
     }
-	Serial.println("\n" + (String)(millis() - temp) + " millis for connection to router");
-	Serial.println("Conn.retries in while loop: " + (String) retries );
-
     if(retries == 300){
         Serial.println("No internet connection");
         return;
     }
-    
+
+	Serial.println("\n" + (String)(millis() - temp) + " millis for connection to router");
+	Serial.println("Conn.retries in while loop: " + (String) retries );
+
     Serial.println("RSSI: "+ (String) WiFi.RSSI() );
     Serial.println("Router BSSID: "+ WiFi.BSSIDstr() );
 
     HTTPClient http;
+    Serial.println("I'm going to call: "+queryString);
     http.begin( queryString );
 
     if (http.GET() == 200){
         String payload = http.getString();
+        Serial.println(payload + "\n\n");
         parseJson(payload);
     }
     else
-        Serial.print("Error code: " + (String)http.GET() );
+        Serial.println("Error code: " + (String)http.GET() + "\n");
 
     http.end();
+
+    WiFi.mode(WIFI_AP);
 }
 
 
 void parseJson(String payload){
-    StaticJsonDocument<1000> jsonDocument;
-    JsonObject& root = jsonDocument.parseObject(payload);
 
+    /*StaticJsonDocument<500> doc;
+    JsonObject& root = doc.parseObject(payload);
+    if(!root.success()) {
+        Serial.println("Failed to parse Json");
+        return;
+    }
+
+    forecast = root["hourly"][4]["weather"]["main"];
+    Serial.println("Forecast: "+ (String)forecast);*/
 }
 
 
@@ -331,6 +341,7 @@ void displayToScreen(){
     display.fillScreen(TFT_BLACK);
 	display.setTextColor(TFT_WHITE);
 
+
 	//DATE
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.setCursor(0, 32+3);		/* 32 is number's font height */
@@ -352,9 +363,9 @@ void displayToScreen(){
 
 
 	//WEATHER FORECAST
-	const byte forecast_w = 120, forecast_h = 75;	/* PLACEHOLDER -> removed when inserting icons */
-	display.setCursor(1, display.getCursorY()+4);	/* Upper font size + 4 */ 
-	display.drawRoundRect(1, display.getCursorY(), forecast_w, forecast_h, 5, TFT_LIGHTGREY);
+	const byte icon_w = 80, icon_h = 80;
+    display.pushImage(10, display.getCursorY()+4, icon_w, icon_h, sun);
+
 
 	/*--------------------------------- SENSOR DATA ------------------------------------------*/
     //Right alignment
@@ -363,28 +374,31 @@ void displayToScreen(){
     
     //out - Pressure
     display.setFreeFont(&URW_Gothic_L_Book_28);
-    display.setCursor(display.getCursorX() + forecast_w + 15, display.getCursorY() + 41);
+    display.setCursor( icon_w + 38, display.getCursorY() + 41);
 	display.setTextColor(0xAE3F);
-    display.println( (String)(int)sensorData.pressure_ext + " hPa");
+    display.print( (String)(int)sensorData.pressure_ext + " hPa");
+
+    //SIGNAL STRENGTH (ext-sensor)
+    display.setCursor( display.width() - display.textWidth( (String)sensorData.rssi +"dBi"), display.getCursorY() );
+    display.setTextColor(0x94B2);
+    display.println((String)sensorData.rssi + "dBi");
 
     //HEAT INDEX
-    display.setCursor(forecast_w + 15, display.getCursorY() + 2);
+    display.setCursor(icon_w + 38, display.getCursorY() + 2);
     display.setTextColor(0xE6B1);
-    display.println("H.I  " + (String)(int)heatIndex + "'C -> " + (String) heatIndexLevel);
+    display.print( "H.I  " + (String)(int)heatIndex + "'C" );
+    display.setCursor(display.width() - display.textWidth(heatIndexLevel), display.getCursorY() );
+    display.println(heatIndexLevel);
 
     //AIR QUALITY
     display.setTextColor(0x94B2);
-    display.print( (String)(int)sensorData.TVOC + " KOhm tVOC -> "+ airQualityIndex);
-
-    //IN tag
-    display.println();  //needed if removing this tag
-    /*display.setFreeFont(&URW_Gothic_L_Book_28);
-    display.setTextColor(TFT_WHITE);
-    display.setCursor(display.width() - (right_offset/2) - (display.textWidth("- IN -")/2), display.getCursorY());
-    display.println("- IN -");*/
+    display.setCursor(1, display.getCursorY() + 8);
+    display.print( (String)(int)sensorData.TVOC + " tVOC - IAQ." + (String)(int)sensorData.IAQ);
+    display.setCursor(display.width() - display.textWidth(airQualityIndex), display.getCursorY() );
+    display.println(airQualityIndex);
 
     //out - Temp
-	display.setCursor(1, display.getCursorY() + 25);    //light Y offset
+	display.setCursor(1, display.getCursorY() + 22);    //light Y offset
 	display.setTextColor(0xF9E7);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.print(sensorData.temp_ext, 1);
@@ -424,10 +438,6 @@ void displayToScreen(){
 	display.println("V");
 
     display.drawFastVLine( display.width()/2+20, (display.height()/1.55F), (display.height()/1.55F), 0x94B2);
-
-    display.setCursor(5,90);
-    display.println((String)sensorData.conn_time + "ms");
-    display.print((String)sensorData.rssi + "dBi");
     
     display.endWrite();
 }
