@@ -1,8 +1,7 @@
-//#include "bsec.h"
+#include <bsec.h>
 
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_BME680.h>
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
@@ -21,112 +20,54 @@ const IPAddress localIP(192, 168, 4, 2);
 const IPAddress gateway(192, 168, 4, 1);
 const IPAddress subnet(255, 255, 255, 252);
 
-Adafruit_BME680 bme;
-
 float voltage_ext;
-float temp_ext;
-float humidity_ext;
-float pressure_ext;
-float airTVOC = 0;
 
-/*bsec_virtual_sensor_t sensorList[10] = {
-	BSEC_OUTPUT_RAW_TEMPERATURE,
-	BSEC_OUTPUT_RAW_PRESSURE,
-	BSEC_OUTPUT_RAW_HUMIDITY,
-	BSEC_OUTPUT_RAW_GAS,
+bsec_virtual_sensor_t sensorList[10] = {
 	BSEC_OUTPUT_IAQ,
 	BSEC_OUTPUT_STATIC_IAQ,
 	BSEC_OUTPUT_CO2_EQUIVALENT,
 	BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,	//tVOC
 	BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
 	BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
-  };
-Bsec util;*/
+};
+Bsec bme=Bsec();
 
 
 unsigned long start;
 void setup() {
+
 	start = millis();
 	/** Disabling WiFi radio as soon as waking up */
 	WiFi.mode(WIFI_OFF);  
-	WiFi.forceSleepBegin();   //Causes error in espNOW sending
+	WiFi.forceSleepBegin();
 
 	Serial.begin(115200);   //Will be removed for 'production' to save battery
 	Wire.begin();
 	pinMode(A0, INPUT);  /** Battery voltage divider input*/
 
-	
-	/*-------------------------------- BME680 Sensor ---------------------------------*/
-	if (! bme.begin(0x77, false))  Serial.println("Couldn't find BME sensor, but keep working");
-	
-	/** Weather/Climate-monitor  Calibration */
-	bme.setTemperatureOversampling(BME680_OS_1X);
-	bme.setHumidityOversampling(BME680_OS_1X);
-	bme.setPressureOversampling(BME680_OS_1X);
-	bme.setIIRFilterSize(BME680_FILTER_SIZE_0);
-	bme.setGasHeater(320, 150); 
 
-	/*------------------------------ Air quality API config. --------------------------*/
-	//util.begin(BME680_I2C_ADDR_SECONDARY, Wire);
+	/*------------------------------ BME680 Sensor + Air quality API --------------------------*/
+	bme.begin(BME680_I2C_ADDR_SECONDARY, Wire);
+	//bme.setTemperatureOffset(-0.541F);
 	/** Sets the desired sensors and the sample rates */
-	//util.updateSubscription(sensorList, 10, BSEC_SAMPLE_RATE_ULP);
-	//checkutilStatus();
+	bme.updateSubscription(sensorList, 10, BSEC_SAMPLE_RATE_LP);
 }
 
 
-void ambientMeasurement() {
-	
-	if(!bme.performReading() ) 
-	  Serial.println("Error reading BME");
-	temp_ext = bme.temperature;
-	pressure_ext= bme.pressure / 100.0;
-	humidity_ext = bme.humidity;
-	airTVOC = bme.gas_resistance / 1000.0;
-
-	voltage_ext = analogRead(A0) * 3.3F / 1024.0F * 4.37F;	/** Sperimental offset of 4.37
-	
-	/*Serial.println("\nIAQ: " + String(util.iaq) + "\nAccuracy: " + String(util.iaqAccuracy) 
-				 + "\nStatic-IAQ: " + String(util.staticIaq) +"\nCO2 " + String(util.co2Equivalent)
-				 + "\nBreath-VOC" + String(util.breathVocEquivalent) );*/
-}
-
-
-/*void computeAirQuality(){
-	if(! util.run()) {
-		Serial.println("BSEC calculations not ready");
-		return;
-	}
-	Serial.println("\nRaw temperature [°C], pressure [hPa], raw relative humidity [%], gas [Ohm], IAQ, IAQ accuracy, temperature [°C], relative humidity [%], Static IAQ, CO2 equivalent, breath VOC equivalent");
-	String output;
-	  output += ", " + String(util.rawTemperature);
-	  output += ", " + String(util.pressure);
-	  output += ", " + String(util.rawHumidity);
-	  output += ", " + String(util.gasResistance);
-	  output += ", " + String(util.iaq);
-	  output += ", " + String(util.iaqAccuracy);
-	  output += ", " + String(util.temperature);
-	  output += ", " + String(util.humidity);
-	  output += ", " + String(util.staticIaq);
-	  output += ", " + String(util.co2Equivalent);
-	  output += ", " + String(util.breathVocEquivalent);
-	  Serial.println(output);
-}*/
-
-
-/*void checkutilStatus(void)
+void checkSensorStatus(void)
 {
-  if (util.status != BSEC_OK)
-	if (util.status < BSEC_OK)
-	  Serial.println( "BSEC error code : " + String(util.status));
-	else
-	  Serial.println( "BSEC warning code : " + String(util.status));
+	if (bme.status != BSEC_OK)
+		if (bme.status < BSEC_OK) 
+			Serial.println("BSEC error code : " + String(bme.status));
+		else 
+			Serial.println("BSEC warning code : " + String(bme.status));
 
-  if (util.bme680Status != BME680_OK) 
-	if (util.bme680Status < BME680_OK)
-	  Serial.println( "BME680 error code : " + String(util.bme680Status));
-	else
-	  Serial.println( "BME680 warning code : " + String(util.bme680Status));
-}*/
+	if (bme.bme680Status != BME680_OK) 
+		if (bme.bme680Status < BME680_OK) 
+			Serial.println("BME680 error code : " + String(bme.bme680Status));
+		else
+			Serial.println("BME680 warning code : " + String(bme.bme680Status));
+}
 
 
 void forceWifiOn(){
@@ -137,7 +78,8 @@ void forceWifiOn(){
 }
 
 
-void sendData() {
+void sendData() 
+{
 	forceWifiOn();
 
 	if (!WiFi.forceSleepWake())
@@ -156,7 +98,7 @@ void sendData() {
 
 	unsigned long temp = millis();
 	unsigned short retry = 0;
-	WiFi.begin(ssid, password, 1, bssid, true);
+	WiFi.begin(ssid, password, 1, bssid, true);		//Channel 1 - 2412MHz
 	while (WiFi.status() != WL_CONNECTED && retry < 2000) {
 		delay(1);
 		retry++;
@@ -174,9 +116,10 @@ void sendData() {
 		Serial.println("RSSI: "+ (String) WiFi.RSSI() );
 
 		HTTPClient http;
-		http.begin("http://192.168.4.1/update?temp=" + (String) temp_ext + "&hum=" + (String) humidity_ext +
-					"&pres=" + (String) pressure_ext + "&volt=" + (String) voltage_ext + 
-					"&time=" + (String) conn_time + "&rssi=" + (String) WiFi.RSSI() 
+		http.begin("http://192.168.4.1/update?temp=" + 
+				(String)bme.temperature + "&hum=" + (String)bme.humidity + "&pres=" + (String)bme.pressure + 
+				"&tvoc=" + (String)bme.breathVocEquivalent + "&iaq=" + (String)bme.iaq + "&co=" + (String)bme.co2Equivalent + 
+				"&volt=" + (String)voltage_ext + "&time=" + (String)conn_time + "&rssi=" + (String)WiFi.RSSI() 
 		);
 		/*if ( http.GET() == 200) {
 		  Serial.println("Server told me to sleep for " + http.getString() + " seconds");
@@ -195,17 +138,25 @@ void printToSerial() {
 	Serial.print("\nVoltage: ");
 	Serial.print(voltage_ext, 4);
 	Serial.println("V");
-	/*--------------------------------------------------------------------------------*/
-	Serial.println("Temperature: " + (String) temp_ext + " °C");
-	Serial.println("Pressure: " + (String) pressure_ext + " hPa");
-	Serial.println("Humidity: " + (String) humidity_ext + " %RH");
-	Serial.println("Air Index: " + (String) airTVOC + " KOhms");
+
+	Serial.println("\nIAQ: " + (String)bme.iaq + "\nAccuracy: " + (String)bme.iaqAccuracy 
+				+ "\nStatic-IAQ: " + (String)bme.staticIaq +"\nCO2: " + (String)bme.co2Equivalent
+				+ "\ntVOC: " + (String)bme.breathVocEquivalent );
+
+	Serial.println("\nTemp: " + (String)bme.temperature + "\nHumidity: " + (String)bme.humidity
+				 + "\nPressure: " + (String)(bme.pressure/100) );
 }
 
 
-void loop() {
-	ambientMeasurement();
-	//computeAirQuality();
+void loop() 
+{
+	voltage_ext = analogRead(A0) * 3.3F / 1023.0F * 4.6843F;
+
+	if (! bme.run()) {
+		Serial.println("BME measurements not available");
+		checkSensorStatus();
+	}
+
 	printToSerial();
 	sendData();
 

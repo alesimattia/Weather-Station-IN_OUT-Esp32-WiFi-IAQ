@@ -36,7 +36,7 @@ const unsigned short TIME_TO_NEXT_HTTP = 60;  //Seconds
 //const unsigned int TIME_TO_LISTEN = 5;
 const unsigned int TIME_TO_SLEEP = 30;
 //unsigned long previousMillis = 0;
-unsigned short call_miss = 0;    /** After 3 ext_sensor data missing, writes 0 on the struct*/
+unsigned short call_miss = 0;    /** After 2 ext_sensor CYCLE data missing, writes 0 on the struct*/
 
 /*---------------- Access point -------------------*/
 const char* ap_ssid = "ESP-WeatherStation";
@@ -74,7 +74,7 @@ const char daysOfTheWeek[7][12] = {
 };
 DateTime currentTime;
 
-const char heatCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger", "Extreme-Danger"};
+const char heatCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger"};
 const char airCondition[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
 String forecast = "Sun";
 
@@ -157,7 +157,7 @@ void setup() {
     
 
     /*---------------------------- Web server - Access Point -------------------------*/
-    while( !WiFi.mode(WIFI_AP_STA) )
+    while( !WiFi.mode(WIFI_AP) )
         Serial.println("Wifi radio not ready");
 
     if(! WiFi.config(localIP, gateway, subnetM) )
@@ -167,33 +167,36 @@ void setup() {
     if(! WiFi.setTxPower(WIFI_POWER_20_5dBm) )
         Serial.println("Can't set Wifi Power mode");
 
-    while(! WiFi.softAP(ap_ssid, ap_password, 1, 0, 2) )
+    while(! WiFi.softAP(ap_ssid, ap_password, 1, 0, 2) )    //Channel 1 - 2412MHz
         Serial.println("Acccess Point not ready");
 
     //Serial.println("\nAccess Point IP: " + WiFi.softAPIP().toString() + " Bap_ssid: "+WiFi.macAddress());
 
     server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
-        if (request->hasParam("temp") && request->hasParam("hum") && request->hasParam("pres") && 
-            request->hasParam("volt")) {
+        if (request->hasParam("volt") && request->hasParam("rssi") )    //no need to check all querystring parameters
+        {
             sensorData.temp_ext = request->getParam("temp")->value().toFloat();
             sensorData.humidity_ext = request->getParam("hum")->value().toFloat();
             sensorData.pressure_ext = request->getParam("pres")->value().toFloat();
             sensorData.voltage_ext = request->getParam("volt")->value().toFloat();
-            vPercent_ext = battPercentage(sensorData.voltage_ext);
-            //sensorData.TVOC = request->getParam("tvoc")->value().toFloat();
-            //sensorData.IAQ = request->getParam("iaq")->value().toFloat();
-            //sensorData.CO = request->getParam("co")->value().toFloat();
+            sensorData.TVOC = request->getParam("tvoc")->value().toFloat();
+            sensorData.IAQ = request->getParam("iaq")->value().toFloat();
+            sensorData.CO = request->getParam("co")->value().toFloat();
             sensorData.conn_time = request->getParam("time")->value().toInt();
             sensorData.rssi = request->getParam("rssi")->value().toInt();
         
+            vPercent_ext = battPercentage(sensorData.voltage_ext);
+            heatIndex = util.computeHeatIndex(sensorData.temp_ext, sensorData.humidity_ext, false);
+            heatIndexLevel = getHeatCondition(heatIndex);
             call_miss = 0;
+
+            request->send(200, "text/plain", (String)TIME_TO_NEXT_HTTP );
+            Serial.println("Answered to a client\n");
         }
         else{ 
             Serial.println("Bad URL request");
-            request->send(200, "text/plain", "Bad URL request");
+            request->send(400, "text/plain", "Bad URL request");
         }
-        request->send(200, "text/plain", (String)TIME_TO_NEXT_HTTP );
-        Serial.println("Answered to a client\n");
     });
     server.begin();
 }
@@ -223,15 +226,16 @@ void readBattery() {
 
 
 void ambientMeasurement() {
-   
     bmp.takeForcedMeasurement();    /** Mandatory while in forced mode */
-    temp = bmp.readTemperature() - 5.42F - 1;     /** See Calibration.xls */
+    temp = bmp.readTemperature() - 5.573F;     /** See Calibration.xls */
     bmp.takeForcedMeasurement();
     pressure = bmp.readPressure() / 100;  //hPa
 
     humidity = hdc.readHumidity();
-    heatIndex = util.computeHeatIndex(temp, humidity, false);
-    
+}
+
+
+String getHeatCondition(float heatIndex){
     if(heatIndex < 26)   heatIndexLevel = heatCondition[0];
     else if (heatIndex >= 26 && heatIndex <= 32)
         heatIndexLevel = heatCondition[1];
@@ -239,14 +243,16 @@ void ambientMeasurement() {
         heatIndexLevel = heatCondition[2];
     else if(heatIndex > 41 && heatIndex <= 54)
         heatIndexLevel = heatCondition[3];
-    else    heatIndexLevel = heatCondition[3];
+    else    heatIndexLevel = "";
+
+    return heatIndexLevel;
 }
 
 
 void getForecast(){
 
     WiFi.disconnect(true, true);
-    if (!WiFi.mode(WIFI_STA))
+    while( !WiFi.mode(WIFI_STA) )
 		Serial.println("Wifi STA not ready");
 
     //WiFi.config( lan_ip, lan_gateway, lan_subnetM );
@@ -266,7 +272,7 @@ void getForecast(){
 	Serial.println("\n" + (String)(millis() - temp) + " millis for connection to router");
 	Serial.println("Conn.retries in while loop: " + (String) retries );
 
-    Serial.println("RSSI: "+ (String) WiFi.RSSI() );
+    Serial.println("Router RSSI: "+ (String) WiFi.RSSI() );
     Serial.println("Router BSSID: "+ WiFi.BSSIDstr() );
 
     HTTPClient http;
@@ -276,18 +282,24 @@ void getForecast(){
     if (http.GET() == 200){
         String payload = http.getString();
         Serial.println(payload + "\n\n");
-        parseJson(payload);
+
+        parseJsonAnswer(payload);
     }
     else
         Serial.println("Error code: " + (String)http.GET() + "\n");
 
     http.end();
 
+
+    /** Back to HTTP listener */
+    while( WiFi.disconnect() );
     WiFi.mode(WIFI_AP);
+    while(! WiFi.softAP(ap_ssid, ap_password, 1, 0, 2) )    //Channel 1 - 2412MHz
+        Serial.println("Acccess Point not ready");
 }
 
 
-void parseJson(String payload){
+void parseJsonAnswer(String payload){
 
     /*StaticJsonDocument<500> doc;
     JsonObject& root = doc.parseObject(payload);
@@ -386,14 +398,16 @@ void displayToScreen(){
     //HEAT INDEX
     display.setCursor(icon_w + 38, display.getCursorY() + 2);
     display.setTextColor(0xE6B1);
-    display.print( "H.I  " + (String)(int)heatIndex + "'C" );
+    display.print("Feels like: ");
+    display.print(heatIndex, 1);
+    display.print(" 'C" );
     display.setCursor(display.width() - display.textWidth(heatIndexLevel), display.getCursorY() );
     display.println(heatIndexLevel);
 
     //AIR QUALITY
     display.setTextColor(0x94B2);
     display.setCursor(1, display.getCursorY() + 8);
-    display.print( (String)(int)sensorData.TVOC + " tVOC - IAQ." + (String)(int)sensorData.IAQ);
+    display.print( (String)(int)sensorData.TVOC + " ppM - Quality:" + (String)(int)sensorData.IAQ + " CO2 " + (String)sensorData.CO );
     display.setCursor(display.width() - display.textWidth(airQualityIndex), display.getCursorY() );
     display.println(airQualityIndex);
 
@@ -443,29 +457,33 @@ void displayToScreen(){
 }
 
 
+void clearData(){
+    memset(&sensorData, 0, sizeof(sensorData) ); /** Clear old ext_sensor data */
+    vPercent_ext = 0;   
+    heatIndex = 0;
+    call_miss = 0;    /** No need to always clear the struct */
+    Serial.println("No ext_sensor found");
+}
+
+
+
 void loop() {
     call_miss++;
 
     readBattery();
     ambientMeasurement();
     currentTime = rtc.now();
-    if(currentTime.minute() == 0 || currentTime.minute() == 30 )
-        getForecast();
-    /*unsigned long currentMillis = millis(); 
-    if(currentMillis - previousMillis >= (TIME_TO_NEXT_HTTP_HTTP - TIME_TO_SLEEP - 1000U)){  //Turns on AP 1s before ext_station wakes from sleep.
-        getExtSensor();
-        previousMillis = currentMillis;
-    }*/
+    
+    //if(currentTime.minute() == 0 || currentTime.minute() == 30 )
+        //getForecast();
 
     /** Ext_sensor not available or not sending data */
-    if( call_miss >= 3*(TIME_TO_NEXT_HTTP/TIME_TO_SLEEP) ){   /** Otherways data are overwritten */
-        memset(&sensorData, 0, sizeof(sensorData) ); /** Clear old ext_sensor data */
-        vPercent_ext = 0;
-        call_miss = 3;
-        Serial.println("No ext_sensor found");
-    }
-
+    if( call_miss >= 2*(TIME_TO_NEXT_HTTP/TIME_TO_SLEEP) )   
+        clearData();
+    /** else data are overwritten */
+    
     printToSerial();
     displayToScreen();
+
     delay(TIME_TO_SLEEP*1E3);
 }
