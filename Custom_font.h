@@ -1,8 +1,7 @@
 // Created by http://oleddisplay.squix.ch/ Consider a donation
 
 
-/** Best font. 
- * Located in  %USERPROFILE%\Documents\Arduino\libraries\TFT_eSPI  */
+/** Best font. located in main project directory. #include "Custom_font.h" */
 
 /******************************************* GENERAL USAGE (Date and sensor data) **************************************************************/
 

@@ -157,3 +157,7 @@ The weather station will always be plugged to an Usb power suppy, so it is showi
 
 ## External ESP sensor
 // Fixed BSSID and Channel dramatically improves connecting speed from about 3500ms to 1050ms 
+
+// Uncomment BMP280::takeForcedMeasurement in .h and .cpp
+
+// Custom_font.h in project folder, not in library folder

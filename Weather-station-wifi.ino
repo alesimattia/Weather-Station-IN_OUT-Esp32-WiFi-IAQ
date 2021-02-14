@@ -1,6 +1,6 @@
 #include <TFT_eSPI.h>
 #include <User_Setup.h>
-#include <Custom_font.h>
+#include "Custom_font.h"
 
 #include <Wire.h>
 
@@ -11,7 +11,6 @@
 #include <DHT.h>    //heat-index
 
 #include <WiFi.h>
-#include <AsyncTCP.h>
 #include <HTTPClient.h>
 #include <ESPAsyncWebServer.h>
 
@@ -19,7 +18,7 @@
 #include "Connect.h"    //Weather api parameters
 #include "Weather_icons.h"
 
-#define ESP8266     /**Better to have for some libraries */
+#define ESP32
 
 
 /*-------------------- Sensori ------------------*/
@@ -31,19 +30,17 @@ DHT util = DHT(NULL,DHT22); //just for heat-index
 const byte batt_in = 34U;
 
 
-/*-------------------------------------- Variabili globali ---------------------------------------*/
-const unsigned short TIME_TO_NEXT_HTTP = 60;  //Seconds
-//const unsigned int TIME_TO_LISTEN = 5;
-const unsigned int TIME_TO_SLEEP = 30;
-//unsigned long previousMillis = 0;
+/*-------------------------------------------- Variabili globali ----------------------------------------*/
+const unsigned long TIME_TO_SLEEP = 30;
+unsigned short TIME_TO_NEXT_HTTP = 60;  //Seconds - sent and overriden by ext_sensor
 unsigned short call_miss = 0;    /** After 2 ext_sensor CYCLE data missing, writes 0 on the struct*/
 
 /*---------------- Access point -------------------*/
 const char* ap_ssid = "ESP-WeatherStation";
 const char* ap_password = "esp32station";
-IPAddress localIP(192, 168, 4, 1);
-IPAddress gateway(192, 168, 4, 1);
-IPAddress subnetM(255, 255, 255, 252);
+const IPAddress localIP(192, 168, 4, 1);
+const IPAddress gateway(192, 168, 4, 1);
+const IPAddress subnetM(255, 255, 255, 252);
 AsyncWebServer server(80);
 
 /*---------------- Internet connection ----------------*/
@@ -59,8 +56,8 @@ const IPAddress lan_subnetM(255, 255, 255, 0);
 
 const String lat = "42.826", lon = "13.691";
 const String exlude = "current,daily,minutely,alerts";
-const String queryString ="https://api.openweathermap.org/data/2.5/onecall?lat="+ lat + "&lon=" + lon + 
-                          "&exclude="+ exlude +"&units=metric&lang=it&appid="+ API_KEY;
+const String queryString ="https://api.openweathermap.org/data/2.5/onecall?lat=" + 
+                        lat + "&lon=" + lon + "&exclude="+ exlude +"&units=metric&lang=it&appid="+ API_KEY;
 
 
 const char daysOfTheWeek[7][12] = {
@@ -88,11 +85,10 @@ TFT_eSPI display = TFT_eSPI();
 
 
 /*----------------- Environment data  ----------------*/
-float voltage;
+float voltage, temp, humidity, pressure, heatIndex;;
 int vPercent, vPercent_ext = NULL;
 
-float temp, humidity, pressure, heatIndex;
-String heatIndexLevel ="NULL";
+String heatIndexLevel ="";
 String airQualityIndex = airCondition[0];
 
 /**  External sensor data may not be 
@@ -164,7 +160,7 @@ void setup() {
       Serial.println("AP Failed to configure IP");
 
     WiFi.persistent(false);
-    if(! WiFi.setTxPower(WIFI_POWER_20_5dBm) )
+    if(! WiFi.setTxPower(WIFI_POWER_19_5dBm) )
         Serial.println("Can't set Wifi Power mode");
 
     while(! WiFi.softAP(ap_ssid, ap_password, 1, 0, 2) )    //Channel 1 - 2412MHz
@@ -177,14 +173,15 @@ void setup() {
         {
             sensorData.temp_ext = request->getParam("temp")->value().toFloat();
             sensorData.humidity_ext = request->getParam("hum")->value().toFloat();
-            sensorData.pressure_ext = request->getParam("pres")->value().toFloat();
+            sensorData.pressure_ext = request->getParam("pres")->value().toFloat() / 100;
             sensorData.voltage_ext = request->getParam("volt")->value().toFloat();
             sensorData.TVOC = request->getParam("tvoc")->value().toFloat();
             sensorData.IAQ = request->getParam("iaq")->value().toFloat();
             sensorData.CO = request->getParam("co")->value().toFloat();
             sensorData.conn_time = request->getParam("time")->value().toInt();
             sensorData.rssi = request->getParam("rssi")->value().toInt();
-        
+            TIME_TO_NEXT_HTTP = request->getParam("next")->value().toInt();
+
             vPercent_ext = battPercentage(sensorData.voltage_ext);
             heatIndex = util.computeHeatIndex(sensorData.temp_ext, sensorData.humidity_ext, false);
             heatIndexLevel = getHeatCondition(heatIndex);
@@ -202,16 +199,18 @@ void setup() {
 }
 
 
-int battPercentage(float v) {
-    const float battMin = 3.2;
-    const float battMax = 4.235;  //My charging circuit
+int battPercentage(float v) 
+{
+    const float battMin = 3.2F;
+    const float battMax = 4.235F;  //My charging circuit
     if (v >= battMin)
         return (v - battMin) * 100 / (battMax - battMin);
     else return 0;
 }
 
 
-void readBattery() {
+void readBattery() 
+{
     const byte nReadings = 40;
     float voltage_reading = 0;
 
@@ -220,12 +219,13 @@ void readBattery() {
         voltage_reading += analogRead(batt_in);
         delay(5);
     }
-    voltage = (voltage_reading / nReadings) * 3.3 / 4095 * 2.17F;   //Sperimental attenuation
+    voltage = (voltage_reading / nReadings) * 3.3F / 4095 * 2.17F;   //Sperimental attenuation
     vPercent = battPercentage(voltage);
 }
 
 
-void ambientMeasurement() {
+void ambientMeasurement() 
+{
     bmp.takeForcedMeasurement();    /** Mandatory while in forced mode */
     temp = bmp.readTemperature() - 5.573F;     /** See Calibration.xls */
     bmp.takeForcedMeasurement();
@@ -235,7 +235,8 @@ void ambientMeasurement() {
 }
 
 
-String getHeatCondition(float heatIndex){
+String getHeatCondition(float heatIndex)
+{
     if(heatIndex < 26)   heatIndexLevel = heatCondition[0];
     else if (heatIndex >= 26 && heatIndex <= 32)
         heatIndexLevel = heatCondition[1];
@@ -249,8 +250,8 @@ String getHeatCondition(float heatIndex){
 }
 
 
-void getForecast(){
-
+void getForecast()
+{
     WiFi.disconnect(true, true);
     while( !WiFi.mode(WIFI_STA) )
 		Serial.println("Wifi STA not ready");
@@ -269,11 +270,9 @@ void getForecast(){
         return;
     }
 
-	Serial.println("\n" + (String)(millis() - temp) + " millis for connection to router");
-	Serial.println("Conn.retries in while loop: " + (String) retries );
+	Serial.println("\n" + (String)(millis() - temp) + " millis for connection to router - Retries: " + (String) retries );
 
-    Serial.println("Router RSSI: "+ (String) WiFi.RSSI() );
-    Serial.println("Router BSSID: "+ WiFi.BSSIDstr() );
+    Serial.println("Router BSSID: "+ WiFi.BSSIDstr() + "RSSI: "+ (String) WiFi.RSSI());
 
     HTTPClient http;
     Serial.println("I'm going to call: "+queryString);
@@ -332,12 +331,13 @@ void printToSerial() {
     Serial.println("Heat Index: " + (String) heatIndex + "\t" + heatIndexLevel);
     Serial.println();
     /*--------------------------------------------------------------------------------*/
-    Serial.println("EXT_Voltage: " + (String) sensorData.voltage_ext + " V\t" + (String) vPercent_ext + "%");
+    Serial.println("EXT_Voltage: " + String( sensorData.voltage_ext,3 ) + " V\t" + (String) vPercent_ext + "%");
     Serial.println("EXT_Temperature: " + (String) sensorData.temp_ext + " °C");
     Serial.println("EXT_Pressure: " + (String) sensorData.pressure_ext + " hPa");
     Serial.println("EXT_Humidity: " + (String) sensorData.humidity_ext + " %RH");
     Serial.println("Air Quality: " + (String) sensorData.TVOC + " KOhm\n");
     Serial.println("Connection Time: " + (String) sensorData.conn_time + " millis - RSSI: " + (String)sensorData.rssi);
+    Serial.println("Next sending in: " + (String) TIME_TO_NEXT_HTTP + " s.");
     Serial.println("------------------------------------\n");
 }
 
@@ -376,7 +376,7 @@ void displayToScreen(){
 
 	//WEATHER FORECAST
 	const byte icon_w = 80, icon_h = 80;
-    display.pushImage(10, display.getCursorY()+4, icon_w, icon_h, sun);
+    display.pushImage(10, display.getCursorY()+4, icon_w, icon_h, Snow);
 
 
 	/*--------------------------------- SENSOR DATA ------------------------------------------*/
@@ -407,7 +407,7 @@ void displayToScreen(){
     //AIR QUALITY
     display.setTextColor(0x94B2);
     display.setCursor(1, display.getCursorY() + 8);
-    display.print( (String)(int)sensorData.TVOC + " ppM - Quality:" + (String)(int)sensorData.IAQ + " CO2 " + (String)sensorData.CO );
+    display.print( (String)sensorData.TVOC + " ppM " /*+ (String)(int)sensorData.IAQ */+ " CO2: " + (String)(int)sensorData.CO );
     display.setCursor(display.width() - display.textWidth(airQualityIndex), display.getCursorY() );
     display.println(airQualityIndex);
 
@@ -443,13 +443,14 @@ void displayToScreen(){
 	display.setCursor(1, display.getCursorY() + 5);
 	display.setTextColor(0x4CA8);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-	display.print((String)vPercent_ext + "%   " + (String)sensorData.voltage_ext);
-	display.setFreeFont(&URW_Gothic_L_Book_28);
-	display.print("V");
+	display.print((String)vPercent_ext + "%   ");
+    display.setFreeFont(&URW_Gothic_L_Book_28);
+    display.print(sensorData.voltage_ext, 3);
+	display.print(" V");
     //in
-    display.setCursor(display.width()-display.textWidth("0.00V") - 3, display.getCursorY());
-    display.print((String)voltage);
-	display.println("V");
+    display.setCursor(display.width()-display.textWidth("8.888 V") - 3, display.getCursorY());
+    display.print(voltage, 3);
+	display.println(" V");
 
     display.drawFastVLine( display.width()/2+20, (display.height()/1.55F), (display.height()/1.55F), 0x94B2);
     
@@ -480,10 +481,10 @@ void loop() {
     /** Ext_sensor not available or not sending data */
     if( call_miss >= 2*(TIME_TO_NEXT_HTTP/TIME_TO_SLEEP) )   
         clearData();
-    /** else data are overwritten */
+    //else data are overwritten
     
     printToSerial();
     displayToScreen();
 
-    delay(TIME_TO_SLEEP*1E3);
+    delay(TIME_TO_SLEEP*1000UL);
 }
