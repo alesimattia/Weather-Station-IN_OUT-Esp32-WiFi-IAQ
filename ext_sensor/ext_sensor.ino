@@ -1,24 +1,27 @@
 #include <bsec.h>
+#include <EEPROM.h> //to store BSEC calibration state
 #include <Wire.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 
 #define ESP8266
 
-const uint32_t TIME_TO_NEXT_SENDING = 60U * 1000000U;
+const uint32_t TIME_TO_NEXT_SENDING = 30U * 1000000U;
 
-const char* ssid = "ESP-WeatherStation";  
-const byte bssid[] = {0x30,0xAE,0xA4,0x98,0x83,0xB9}; /** In AP call WiFi.macAddress() -- "30:AE:A4:98:83:B9" */
-const char* password = "esp32station"; 
+const char* ssid = "ESP-WeatherStation";
+const char* password = "esp32station";
+const byte bssid[] = {0x30,0xAE,0xA4,0x98,0x83,0xB9};   /** In AP call WiFi.macAddress() -- "30:AE:A4:98:83:B9" */
 unsigned int conn_time = NULL;
 
-const IPAddress localIP(192, 168, 4, 2);
-const IPAddress gateway(192, 168, 4, 1);
-const IPAddress subnet(255, 255, 255, 252);
+const IPAddress localIP(192, 168, 4, 2), 
+				gateway(192, 168, 4, 1), 
+				subnet(255, 255, 255, 252);
 
 float voltage_ext;
 
-bsec_virtual_sensor_t sensorList[6] = {
+Bsec bme=Bsec();
+
+bsec_virtual_sensor_t sensor_list[6] = {
 	BSEC_OUTPUT_STATIC_IAQ,
 	BSEC_OUTPUT_CO2_EQUIVALENT,
 	BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,	//tVOC
@@ -26,42 +29,45 @@ bsec_virtual_sensor_t sensorList[6] = {
 	BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
 	BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
 };
-Bsec bme=Bsec();
+
+uint8_t sensor_state[BSEC_MAX_STATE_BLOB_SIZE] = {0};
+
+const uint8_t bsec_config_iaq[] = {
+	#include "config/generic_33v_300s_4d/bsec_iaq.txt"
+};
+
+
 
 unsigned long start;
 void setup() 
 {
 	start = millis();
-	/** Disabling WiFi radio as soon as waking up */
-	WiFi.forceSleepBegin();
+	WiFi.forceSleepBegin();	 /** Disabling WiFi radio as soon as waking up */
 
-	Serial.begin(115200);   //Will be removed for 'production' to save battery
+	Serial.begin(115200);
 	Wire.begin();
+	EEPROM.begin( BSEC_MAX_STATE_BLOB_SIZE );
 
 	pinMode(A0, INPUT);  /** Battery voltage divider input*/
 
-	/*---------------- BME680 Sensor + Air quality API --------------------*/
-	bme.begin(BME680_I2C_ADDR_SECONDARY, Wire);
-	//bme.setTemperatureOffset(-0.541F);
 
-	/** Sets the desired sensors and the sample rates */
-	bme.updateSubscription(sensorList, 6, BSEC_SAMPLE_RATE_ULP);
-}
+	/*------------------- BME680 Sensor + Air quality API ---------------------*/
+	bme.begin(BME680_I2C_ADDR_SECONDARY, Wire); 
+	bme.setConfig(bsec_config_iaq);
+	bme.updateSubscription(sensor_list, sizeof(sensor_list)/sizeof(sensor_list[0]), BSEC_SAMPLE_RATE_LP);
+	
+	if( sensor_state ){
+		EEPROM.get(0, sensor_state);
+		bme.setState(sensor_state);
+	}
+	else Serial.println("\nNo BSEC state stored yet");
 
-
-void checkSensorStatus(void)
-{
-	if (bme.status != BSEC_OK)
-		if (bme.status < BSEC_OK) 
-			Serial.println("BSEC error code : " + String(bme.status));
-		else 
-			Serial.println("BSEC warning code : " + String(bme.status));
-
-	if (bme.bme680Status != BME680_OK) 
-		if (bme.bme680Status < BME680_OK) 
-			Serial.println("BME680 error code : " + String(bme.bme680Status));
-		else
-			Serial.println("BME680 warning code : " + String(bme.bme680Status));
+	Serial.print("\nI set this state: ");  printState(sensor_state);
+	
+	if (!checkSensor()){ 
+		Serial.println("Failed to init BME680 !!");   
+		return; 
+	}
 }
 
 
@@ -70,7 +76,7 @@ void sendData()
 	if ( !WiFi.forceSleepWake() )
 		Serial.println("Can't wake wifi");
 
-	WiFi.persistent(false); /** Improves connection of about 400 millis */
+	WiFi.persistent(false);   /** Improves connection of about 400 millis */
 
 	if ( !WiFi.mode(WIFI_STA) )
 		Serial.println("Wifi STA not ready");
@@ -89,7 +95,7 @@ void sendData()
 		delay(1);
 	}
 	conn_time = millis() - partial;
-	Serial.println( "\n"+(String)(millis() - partial) + " millis for WIFI connection. " + (String)retry + " retries");
+	Serial.println( "\n"+(String)(millis() - partial) + " ms. for WIFI connection. " + (String)retry + " retries");
 
 	if (retry == 2000)
 		Serial.println("Can't connect to AP. Too much retries");
@@ -107,6 +113,8 @@ void sendData()
 		http.GET();	 //Not aware of response, just send.
 		http.end();
 	}
+
+	WiFi.forceSleepBegin();
 }
 
 
@@ -122,21 +130,51 @@ void printToSerial() {
 }
 
 
+bool checkSensor() {
+	if (bme.status < BSEC_OK) {
+		Serial.println("BSEC error, status "+ (String) bme.status);
+		return false;
+	} else if (bme.status > BSEC_OK)
+		Serial.println("BSEC warning, status "+ (String) bme.status);
+
+	if (bme.bme680Status < BME680_OK) {
+		Serial.println("Sensor error, bme680_status "+ (String) bme.bme680Status);
+		return false;
+	} else if (bme.bme680Status > BME680_OK)
+		Serial.println("Sensor warning, status "+ (String) bme.bme680Status);
+
+	return true;
+}
+
+
+void printState(uint8_t sensor_state[] ){
+	for (short i = 0; i < BSEC_MAX_STATE_BLOB_SIZE; i++) {
+		Serial.printf("%02x ", sensor_state[i]);
+		if (i % 16 == 15)	Serial.print("\n");
+	}
+	Serial.println();
+}
+
+
+
 void loop() 
 {
-	voltage_ext = analogRead(A0) * 3.3F / 1023.0F * 4.6843F;
-	if (! bme.run()) {
-		Serial.println("BME measurements not available");
-		checkSensorStatus();
+	voltage_ext = analogRead(A0) * 3.3F / 1023.0F * 4.37F;   //4.37 offset at full charge
+
+	if ( bme.run() ) {
+		bme.getState(sensor_state);
+		EEPROM.put(0, sensor_state);
+		EEPROM.commit();
+		EEPROM.end();
+		Serial.println("\nI saved into EMMC memory: ");  printState(sensor_state);
+
+		Serial.print("\n" + (String)(millis()-start) + " ms. for ambient measurement");
+		sendData();
 	}
 
-	Serial.println("\n\n" + (String)(millis()-start) + " ms. for ambient measurement");
-
 	printToSerial();
-	sendData();
-
-	Serial.println("\n----- I took: "+ (String)(millis()-start) + " ms. to complete a cycle ----\n");
-
-	ESP.deepSleepInstant(TIME_TO_NEXT_SENDING, WAKE_RF_DISABLED);
+	Serial.println("\n----- I took "+ (String)(millis()-start) + " ms. to complete a cycle ----\n");
+	
+	ESP.deepSleep(TIME_TO_NEXT_SENDING, WAKE_RF_DISABLED);
 	delay(1); /*Needed for proper sleeping*/
 }

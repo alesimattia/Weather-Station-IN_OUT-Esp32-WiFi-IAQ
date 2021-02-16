@@ -201,8 +201,8 @@ void setup() {
 
 int battPercentage(float v) 
 {
-    const float battMin = 3.2F;
-    const float battMax = 4.235F;  //My charging circuit
+    const float battMin = 3.1F;
+    const float battMax = 4.21F;  //My charging circuit
     if (v >= battMin)
         return (v - battMin) * 100 / (battMax - battMin);
     else return 0;
