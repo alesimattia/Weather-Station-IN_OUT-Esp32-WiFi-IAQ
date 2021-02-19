@@ -101,6 +101,7 @@ typedef struct data_struct {
   float pressure_ext = NULL;
   float TVOC = NULL;    //BSEC_OUTPUT_BREATH_VOC_EQUIVALENT in ppm
   float IAQ = NULL;
+  int accuracy = NULL;
   float CO = NULL;
   int rssi = NULL;
   int conn_time = NULL;
@@ -177,6 +178,7 @@ void setup() {
             sensorData.voltage_ext = request->getParam("volt")->value().toFloat();
             sensorData.TVOC = request->getParam("tvoc")->value().toFloat();
             sensorData.IAQ = request->getParam("iaq")->value().toFloat();
+            sensorData.accuracy = request->getParam("accuracy")->value().toInt();
             sensorData.CO = request->getParam("co")->value().toFloat();
             sensorData.conn_time = request->getParam("time")->value().toInt();
             sensorData.rssi = request->getParam("rssi")->value().toInt();
@@ -201,8 +203,8 @@ void setup() {
 
 int battPercentage(float v) 
 {
-    const float battMin = 3.1F;
-    const float battMax = 4.21F;  //My charging circuit
+    const float battMin = 3.2F;
+    const float battMax = 4.229F;  //My charging circuit
     if (v >= battMin)
         return (v - battMin) * 100 / (battMax - battMin);
     else return 0;
@@ -328,14 +330,14 @@ void printToSerial() {
     Serial.println("Temperature CPU: "+ (String)temperatureRead() +"\n");
     Serial.println("Pressure: " + (String) pressure + " hPa");
     Serial.println("Humidity: " + (String) humidity + " %RH");
-    Serial.println("Heat Index: " + (String) heatIndex + "\t" + heatIndexLevel);
     Serial.println();
     /*--------------------------------------------------------------------------------*/
     Serial.println("EXT_Voltage: " + String( sensorData.voltage_ext,3 ) + " V\t" + (String) vPercent_ext + "%");
     Serial.println("EXT_Temperature: " + (String) sensorData.temp_ext + " °C");
     Serial.println("EXT_Pressure: " + (String) sensorData.pressure_ext + " hPa");
     Serial.println("EXT_Humidity: " + (String) sensorData.humidity_ext + " %RH");
-    Serial.println("Air Quality: " + (String) sensorData.TVOC + " KOhm\n");
+    Serial.println("Heat Index: " + (String) heatIndex + "\t" + heatIndexLevel);
+    Serial.println("\nAir tVOC: " + (String) sensorData.TVOC + " ppm\n");
     Serial.println("Connection Time: " + (String) sensorData.conn_time + " millis - RSSI: " + (String)sensorData.rssi);
     Serial.println("Next sending in: " + (String) TIME_TO_NEXT_HTTP + " s.");
     Serial.println("------------------------------------\n");
@@ -357,8 +359,8 @@ void displayToScreen(){
 	//DATE
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.setCursor(0, 32+3);		/* 32 is number's font height */
-	(currentTime.day()<10)  ?  display.print( "0" + (String)currentTime.day() + "/" )  :  display.print( (String)currentTime.day() + "/" );
-    (currentTime.month()<10)  ?  display.print( "0"+(String)currentTime.month() )       :  display.print( (String)currentTime.month() );
+	(currentTime.day()<10)   ? display.print( "0" + (String)currentTime.day() + "/" )   :  display.print( (String)currentTime.day() + "/" );
+    (currentTime.month()<10) ? display.print( "0" + (String)currentTime.month() + "/" ) :  display.print( (String)currentTime.month() );
     
 	//DoWEEK
     display.setFreeFont(&URW_Gothic_L_Book_28);
@@ -408,8 +410,9 @@ void displayToScreen(){
     display.setTextColor(0x94B2);
     display.setCursor(1, display.getCursorY() + 8);
     display.print( (String)sensorData.TVOC + " ppM " /*+ (String)(int)sensorData.IAQ */+ " CO2: " + (String)(int)sensorData.CO );
-    display.setCursor(display.width() - display.textWidth(airQualityIndex), display.getCursorY() );
-    display.println(airQualityIndex);
+    //display.setCursor(display.width() - display.textWidth(airQualityIndex), display.getCursorY() );
+    display.setCursor(display.width() - display.textWidth("Acc. 0"), display.getCursorY() );
+    display.println("Acc. " + (String) sensorData.accuracy);
 
     //out - Temp
 	display.setCursor(1, display.getCursorY() + 22);    //light Y offset
@@ -452,7 +455,7 @@ void displayToScreen(){
     display.print(voltage, 3);
 	display.println(" V");
 
-    display.drawFastVLine( display.width()/2+20, (display.height()/1.55F), (display.height()/1.55F), 0x94B2);
+    display.drawFastVLine( display.width() / 2 +20, (display.height() / 1.55F), (display.height() / 1.55F), 0x94B2);
     
     display.endWrite();
 }
