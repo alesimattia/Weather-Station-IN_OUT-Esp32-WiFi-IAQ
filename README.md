@@ -153,7 +153,23 @@ Since map() function is using integer calculations
 
 Will not work. So I implemented a custom voltage-mapping function with lower voltage bound 3.2V (as 0%) and 4.2V (100%) as upper bound.
 
-The weather station will always be plugged to an Usb power suppy, so it is showing voltage only (and not percentage).
+The weather station will always be plugged to an Usb power suppy, so it is showing voltage only (and not percentage).  
+  
+
+## Calibration
+>This section is vaild for both external and internal ambient-measurement sensors.  
+
+See the spreadsheet with few samplings of a (cheap) commercially-available weather station.  
+Maybe not the best, but it is a starting point:  [SAMPLINGS](
+https://drive.google.com/file/d/1PmDlydoCnH4jT72zap-6F4M74jH3NuDs/view?usp=sharing)  
+
+-  We note that temperature is affected by enclosure and ESP self-heathing in an upward shift.  
+
+- On the other side, humidity relevations are a bit tricky.  
+Since my 'reference' weather station is not so sensitive (it's not even got decimal precision) we see that BME(P)280 has got more measurement excursion thus we're lead to think that its ambient estimations are 'more true'.  
+> We note that in the external sensor the reference measurements are pretty low and not even rose while raining (nor snowing) so we'll never apply correction to the humidity readings.
+
+<br>
 
 ## External ESP sensor
 // Fixed BSSID and Channel dramatically improves connecting speed from about 3500ms to 1050ms 

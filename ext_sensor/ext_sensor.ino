@@ -1,12 +1,15 @@
 #include <bsec.h>
 #include <EEPROM.h> //to store BSEC calibration state
+#include <FS.h>
 #include <Wire.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
+#include <FS.h>
 
 #define ESP8266
 
 const uint32_t TIME_TO_NEXT_SENDING = 60U * 1000000U;
+int64_t timestamp = 1;
 
 const char* ssid = "ESP-WeatherStation";
 const char* password = "esp32station";
@@ -19,7 +22,8 @@ const IPAddress localIP(192, 168, 4, 2),
 
 float voltage_ext;
 
-Bsec bme=Bsec();
+Bsec bme;
+const char* backup = "/bsec_config_backup.txt";
 
 bsec_virtual_sensor_t sensor_list[14] = {
 	BSEC_OUTPUT_IAQ,
@@ -41,7 +45,7 @@ bsec_virtual_sensor_t sensor_list[14] = {
 uint8_t sensor_state[BSEC_MAX_STATE_BLOB_SIZE] = {0};
 
 const uint8_t bsec_config_iaq[] = {
-	#include "config/generic_33v_300s_4d/bsec_iaq.txt"
+	#include "config/generic_33v_3s_4d/bsec_iaq.txt"
 };
 
 
@@ -54,7 +58,7 @@ void setup()
 
 	Serial.begin(115200);
 	Wire.begin();
-	EEPROM.begin( BSEC_MAX_STATE_BLOB_SIZE + 1 );
+	EEPROM.begin( BSEC_MAX_STATE_BLOB_SIZE + 1 + 8 );
 
 	pinMode(A0, INPUT);  /** Battery voltage divider input*/
 
@@ -85,6 +89,7 @@ void setup()
 		return; 
 	}
 }
+
 
 bool checkSensor() {
 	if (bme.status < BSEC_OK) {
@@ -155,13 +160,12 @@ void printToSerial() {
 	Serial.print(voltage_ext, 4);
 	Serial.println("V");
 
-	Serial.println("\nStab status: " + (String) bme.stabStatus + "\nResistance: " + bme.gasResistance +
-				 "\nRun in status: " + bme.runInStatus + "\nGas accuracy: " + bme.compGasAccuracy +
-				 "\nComp gas value: " + bme.compGasValue + "\nGas percentage: " + (String) bme.gasPercentage );
 	Serial.println("\nACCURACY: " + (String)bme.iaqAccuracy + "\nStatic-IAQ: " + (String)bme.staticIaq 
-		+ "\nCO2: " + (String)bme.co2Equivalent + " ppM" + "\ntVOC: " + (String)bme.breathVocEquivalent + " ppM"
-		+ "\n\nTemp: " + (String)bme.temperature + " 'C" + "\nHumidity: " + (String)bme.humidity + "%RH"
-		+ "\nPressure: " + (String)(bme.pressure/100) + "hPa" );
+			+ "\nCO2: " + (String)bme.co2Equivalent + " ppM" + "\ntVOC: " + (String)bme.breathVocEquivalent + " ppM" );	
+	Serial.println("\nResistance: " + (String)bme.gasResistance + "\nRun in status: " + (String)bme.runInStatus + "\nComp gas value: " + (String)bme.compGasValue + 
+				"\nGas percentage: " + (String)bme.gasPercentage + "\nGas accuracy: " + (String)bme.compGasAccuracy );
+	Serial.println("\nTemp: " + (String)bme.temperature + " 'C" + "\nHumidity: " + (String)bme.humidity + " %RH"
+			+ "\nPressure: " + (String)(bme.pressure/100) + " hPa" );
 	
 }
 
@@ -175,6 +179,17 @@ void printState(uint8_t sensor_state[] ){
 }
 
 
+void printStamp(uint64_t value)
+{
+    const int NUM_DIGITS    = log10(value) + 1;
+    char sz[NUM_DIGITS + 1];
+    sz[NUM_DIGITS] =  0;
+    for ( size_t i = NUM_DIGITS; i--; value /= 10)
+        sz[i] = '0' + (value % 10);
+    Serial.print(sz);
+}
+
+
 void updateState(void)
 {
 	bme.getState(sensor_state);
@@ -185,23 +200,62 @@ void updateState(void)
 	EEPROM.commit();
    	EEPROM.end();
 
-	Serial.println("\nI saved into EMMC memory: ");	
-		printState(sensor_state);
+	/*Serial.println("\nI saved into EMMC memory: ");	
+		printState(sensor_state);*/
 }
 
+
+int64_t getTimestamp() 
+{
+	//READ previous state from eeprom
+	int64_t timestamp;
+		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 0) << 56;
+		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 1) << 48;
+		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 2) << 40;
+		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 3) << 32;
+		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 4) << 24;
+		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 5) << 16;
+		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 6) << 8;
+		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 7);
+
+	timestamp += TIME_TO_NEXT_SENDING;
+
+	//WRITE to eeprom
+	byte timebuffer[8];
+		timebuffer[0] = timestamp >> 56;
+		timebuffer[1] = timestamp >> 48;
+		timebuffer[2] = timestamp >> 40;
+		timebuffer[3] = timestamp >> 32;
+		timebuffer[4] = timestamp >> 24;
+		timebuffer[5] = timestamp >> 16;
+		timebuffer[6] = timestamp >> 8;
+		timebuffer[7] = timestamp;
+	for(short i= 0; i< 8; i++)
+		EEPROM.write(BSEC_MAX_STATE_BLOB_SIZE + 1 + i, timebuffer[i]);
+	EEPROM.commit();
+
+	return timestamp;
+}
 
 
 void loop() 
 {
 	voltage_ext = analogRead(A0) * 3.3F / 1023.0F * 4.37F;   //4.37 offset at full charge
+	int64_t timestamp = getTimestamp();	//uS
 
-	bme.run();
-	updateState();
+	bme.setState(sensor_state);
+	if( bme.run(timestamp) ){
+		updateState();
+		Serial.print("\n" + (String)(millis()-start) + " ms. for ambient measurement");
+		sendData();
+		printToSerial();
 
-	Serial.print("\n" + (String)(millis()-start) + " ms. for ambient measurement");
-	
-	sendData();
-	printToSerial();
+		Serial.print("Next sensor call: ");
+		printStamp(bme.nextCall);
+	}
+
+	Serial.print("\nTimestamp: ");
+	printStamp(timestamp);
 
 	Serial.println("\n----- I took "+ (String)(millis()-start) + " ms. to complete a cycle ----\n");
 	

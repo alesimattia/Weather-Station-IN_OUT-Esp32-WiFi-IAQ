@@ -56,7 +56,7 @@ const IPAddress lan_subnetM(255, 255, 255, 0);
 
 const String lat = "42.826", lon = "13.691";
 const String exlude = "current,daily,minutely,alerts";
-const String queryString ="https://api.openweathermap.org/data/2.5/onecall?lat=" + 
+const String queryString ="api.openweathermap.org/data/2.5/onecall?lat=" + 
                         lat + "&lon=" + lon + "&exclude="+ exlude +"&units=metric&lang=it&appid="+ API_KEY;
 
 
@@ -258,42 +258,50 @@ void getForecast()
     while( !WiFi.mode(WIFI_STA) )
 		Serial.println("Wifi STA not ready");
 
-    //WiFi.config( lan_ip, lan_gateway, lan_subnetM );
+    if ( !WiFi.config(lan_ip, lan_gateway, lan_subnetM) )
+		Serial.println("STA Failed to configure IP");
+
     WiFi.begin( lan_ssid, lan_password);
 
     unsigned long temp = millis();
     short retries = 0;
-    while(WiFi.status() != WL_CONNECTED && retries < 300){
+    while(WiFi.status() != WL_CONNECTED && retries < 3000){
         retries++;
         delay(1);
     }
-    if(retries == 300){
+    if(retries == 3000){
         Serial.println("No internet connection");
         return;
     }
 
-	Serial.println("\n" + (String)(millis() - temp) + " millis for connection to router - Retries: " + (String) retries );
+	Serial.println("\n" + (String)(millis() - temp) + " millis for connection to router \t Retries: " + (String) retries );
 
-    Serial.println("Router BSSID: "+ WiFi.BSSIDstr() + "RSSI: "+ (String) WiFi.RSSI());
+    Serial.println("Router BSSID: "+ WiFi.BSSIDstr() + "  RSSI: "+ (String) WiFi.RSSI() +
+                   "\nMy IP: " + WiFi.localIP().toString() );
 
-    HTTPClient http;
-    Serial.println("I'm going to call: "+queryString);
-    http.begin( queryString );
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("I'm going to call: " + queryString);
 
-    if (http.GET() == 200){
-        String payload = http.getString();
-        Serial.println(payload + "\n\n");
+        HTTPClient http;
+        http.useHTTP10(true);
+        http.begin( queryString.c_str() );
 
-        parseJsonAnswer(payload);
+        int responseCode = http.GET();
+        if (responseCode > 0 ){
+            String payload = http.getString();
+            parseJsonAnswer(payload);
+        }
+        else
+            Serial.println("Error code: " + (String)responseCode + "\n");
+
+        http.end();
     }
-    else
-        Serial.println("Error code: " + (String)http.GET() + "\n");
+    else Serial.println("Not connected to a network");
 
-    http.end();
-
-
+    
     /** Back to HTTP listener */
-    while( WiFi.disconnect() );
+    WiFi.mode(WIFI_AP);
+    while( WiFi.disconnect(false, true) );
     WiFi.mode(WIFI_AP);
     while(! WiFi.softAP(ap_ssid, ap_password, 1, 0, 2) )    //Channel 1 - 2412MHz
         Serial.println("Acccess Point not ready");
@@ -301,16 +309,19 @@ void getForecast()
 
 
 void parseJsonAnswer(String payload){
+    Serial.println("\nn I'm going to parse: \n" + payload + "\n\n");
+    StaticJsonDocument<600> doc;
 
-    /*StaticJsonDocument<500> doc;
-    JsonObject& root = doc.parseObject(payload);
-    if(!root.success()) {
-        Serial.println("Failed to parse Json");
+    DeserializationError error = deserializeJson(doc, payload.c_str() );
+    // Test if parsing succeeds.
+    if (error) {
+        Serial.print(F("deserializeJson() failed: "));
+        Serial.println(error.f_str());
         return;
     }
-
-    forecast = root["hourly"][4]["weather"]["main"];
-    Serial.println("Forecast: "+ (String)forecast);*/
+    Serial.println("I parsed");
+    //forecast = doc["hourly"][2]["weather"][0]["main"];
+    //Serial.println("Forecast: "+ (String)forecast);
 }
 
 
@@ -360,7 +371,7 @@ void displayToScreen(){
 	display.setFreeFont(&URW_Gothic_L_Book_41);
 	display.setCursor(0, 32+3);		/* 32 is number's font height */
 	(currentTime.day()<10)   ? display.print( "0" + (String)currentTime.day() + "/" )   :  display.print( (String)currentTime.day() + "/" );
-    (currentTime.month()<10) ? display.print( "0" + (String)currentTime.month() + "/" ) :  display.print( (String)currentTime.month() );
+    (currentTime.month()<10) ? display.print( "0" + (String)currentTime.month() ) :  display.print( (String)currentTime.month() );
     
 	//DoWEEK
     display.setFreeFont(&URW_Gothic_L_Book_28);
@@ -378,7 +389,7 @@ void displayToScreen(){
 
 	//WEATHER FORECAST
 	const byte icon_w = 80, icon_h = 80;
-    display.pushImage(10, display.getCursorY()+4, icon_w, icon_h, Snow);
+    display.pushImage(10, display.getCursorY()+4, icon_w, icon_h, Sun);
 
 
 	/*--------------------------------- SENSOR DATA ------------------------------------------*/
@@ -481,12 +492,17 @@ void loop() {
     //if(currentTime.minute() == 0 || currentTime.minute() == 30 )
         //getForecast();
 
+    /*if(currentTime.minute() % 3 == 0 )
+        getForecast();
+    */
+
     /** Ext_sensor not available or not sending data */
     if( call_miss >= 2*(TIME_TO_NEXT_HTTP/TIME_TO_SLEEP) )   
         clearData();
     //else data are overwritten
     
-    printToSerial();
+    
+    //printToSerial();
     displayToScreen();
 
     delay(TIME_TO_SLEEP*1000UL);
