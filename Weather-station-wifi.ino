@@ -13,6 +13,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ESPAsyncWebServer.h>
+//#include <WiFiClient.h>
 
 #include <ArduinoJson.h>
 #include "Connect.h"    //Weather api parameters
@@ -42,6 +43,8 @@ const IPAddress localIP(192, 168, 4, 1);
 const IPAddress gateway(192, 168, 4, 1);
 const IPAddress subnetM(255, 255, 255, 252);
 AsyncWebServer server(80);
+WiFiClient client;
+HTTPClient http;
 
 /*---------------- Internet connection ----------------*/
 /** Stored in a private  Connect.h file 
@@ -50,14 +53,15 @@ const char* lan_password = "";
 const String API_KEY;
 */
 const char* lan_ssid = "d-Link";
-const IPAddress lan_ip(192, 168, 1, 200);
-const IPAddress lan_gateway(192, 168, 1, 1);
-const IPAddress lan_subnetM(255, 255, 255, 0);
+IPAddress lan_ip(192, 168, 1, 200),
+        lan_gateway(192, 168, 1, 1),
+        lan_subnet(255, 255, 255, 0),
+        dns_resolver(192, 168, 1, 1);
 
 const String lat = "42.826", lon = "13.691";
 const String exlude = "current,daily,minutely,alerts";
-const String queryString ="api.openweathermap.org/data/2.5/onecall?lat=" + 
-                        lat + "&lon=" + lon + "&exclude="+ exlude +"&units=metric&lang=it&appid="+ API_KEY;
+const String queryString = "http://api.openweathermap.org/data/2.5/onecall?lat=" + 
+                    lat + "&lon=" + lon + "&exclude="+ exlude +"&units=metric&lang=it&appid="+ API_KEY;
 
 
 const char daysOfTheWeek[7][12] = {
@@ -77,10 +81,10 @@ String forecast = "Sun";
 
 
 /*---------------- Display pinout ----------------*/
-const uint8_t screen_pwm_channel = 0;
-const uint8_t screen_led = 16;
-const uint8_t screen_reset = 17;
-const uint8_t screen_DC = 4;    //Data Command pin
+const uint8_t screen_pwm_channel = 0, 
+            screen_led = 16,
+            screen_reset = 17,  
+            screen_DC = 4;    //Data Command pin
 TFT_eSPI display = TFT_eSPI();
 
 
@@ -258,13 +262,13 @@ void getForecast()
     while( !WiFi.mode(WIFI_STA) )
 		Serial.println("Wifi STA not ready");
 
-    if ( !WiFi.config(lan_ip, lan_gateway, lan_subnetM) )
-		Serial.println("STA Failed to configure IP");
-
-    WiFi.begin( lan_ssid, lan_password);
+    if ( !WiFi.config(lan_ip, lan_gateway, lan_subnet, dns_resolver, dns_resolver ) )
+        Serial.println("Wifi configuration failed.");
 
     unsigned long temp = millis();
     short retries = 0;
+
+    WiFi.begin( lan_ssid, lan_password);
     while(WiFi.status() != WL_CONNECTED && retries < 3000){
         retries++;
         delay(1);
@@ -275,24 +279,18 @@ void getForecast()
     }
 
 	Serial.println("\n" + (String)(millis() - temp) + " millis for connection to router \t Retries: " + (String) retries );
+    Serial.println("Router BSSID: "+ WiFi.BSSIDstr() + "  RSSI: "+ (String) WiFi.RSSI() + "\nMy IP: " + WiFi.localIP().toString() );
 
-    Serial.println("Router BSSID: "+ WiFi.BSSIDstr() + "  RSSI: "+ (String) WiFi.RSSI() +
-                   "\nMy IP: " + WiFi.localIP().toString() );
 
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("I'm going to call: " + queryString);
 
-        HTTPClient http;
         http.useHTTP10(true);
-        http.begin( queryString.c_str() );
-
-        int responseCode = http.GET();
-        if (responseCode > 0 ){
-            String payload = http.getString();
-            parseJsonAnswer(payload);
-        }
-        else
-            Serial.println("Error code: " + (String)responseCode + "\n");
+        http.begin(client, queryString);
+        if (http.GET() > 0 )
+            parseJsonAnswer( http.getString() );
+        else    
+            Serial.println("HTTP error\n");
 
         http.end();
     }
@@ -300,28 +298,24 @@ void getForecast()
 
     
     /** Back to HTTP listener */
-    WiFi.mode(WIFI_AP);
-    while( WiFi.disconnect(false, true) );
-    WiFi.mode(WIFI_AP);
+    WiFi.disconnect(false, true);
     while(! WiFi.softAP(ap_ssid, ap_password, 1, 0, 2) )    //Channel 1 - 2412MHz
         Serial.println("Acccess Point not ready");
 }
 
 
 void parseJsonAnswer(String payload){
-    Serial.println("\nn I'm going to parse: \n" + payload + "\n\n");
-    StaticJsonDocument<600> doc;
+    //Serial.println("\nn I'm going to parse: \n" + payload + "\n\n");
 
-    DeserializationError error = deserializeJson(doc, payload.c_str() );
-    // Test if parsing succeeds.
-    if (error) {
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(error.f_str());
-        return;
-    }
-    Serial.println("I parsed");
-    //forecast = doc["hourly"][2]["weather"][0]["main"];
-    //Serial.println("Forecast: "+ (String)forecast);
+    /**Use this calculator https://arduinojson.org/v6/assistant/ */
+    DynamicJsonDocument doc(24576); //bytes
+    deserializeJson(doc, payload);
+    
+                        /**Two hours next*/
+    forecast = doc["hourly"][2]["weather"][0]["main"].as<String>();
+    Serial.println("I parsed this forecast: "+ forecast);
+
+    doc.clear();
 }
 
 
@@ -492,10 +486,10 @@ void loop() {
     //if(currentTime.minute() == 0 || currentTime.minute() == 30 )
         //getForecast();
 
-    /*if(currentTime.minute() % 3 == 0 )
+    //FOR TESTING QUICKLY
+/*    if(currentTime.minute() % 3 == 0 )
         getForecast();
-    */
-
+*/
     /** Ext_sensor not available or not sending data */
     if( call_miss >= 2*(TIME_TO_NEXT_HTTP/TIME_TO_SLEEP) )   
         clearData();
