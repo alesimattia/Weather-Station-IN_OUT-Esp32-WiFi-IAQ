@@ -13,7 +13,6 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ESPAsyncWebServer.h>
-//#include <WiFiClient.h>
 
 #include <ArduinoJson.h>
 #include "Connect.h"    //Weather api parameters
@@ -104,9 +103,9 @@ typedef struct data_struct {
   float humidity_ext = NULL;
   float pressure_ext = NULL;
   float TVOC = NULL;    //BSEC_OUTPUT_BREATH_VOC_EQUIVALENT in ppm
-  float IAQ = NULL;
+  float CO2 = NULL;
+  int IAQ = NULL;
   int accuracy = NULL;
-  float CO = NULL;
   int rssi = NULL;
   int conn_time = NULL;
 } data_struct;
@@ -181,9 +180,9 @@ void setup() {
             sensorData.pressure_ext = request->getParam("pres")->value().toFloat() / 100;
             sensorData.voltage_ext = request->getParam("volt")->value().toFloat();
             sensorData.TVOC = request->getParam("tvoc")->value().toFloat();
-            sensorData.IAQ = request->getParam("iaq")->value().toFloat();
+            sensorData.CO2 = request->getParam("co2")->value().toFloat();
+            sensorData.IAQ = request->getParam("iaq")->value().toInt();
             sensorData.accuracy = request->getParam("accuracy")->value().toInt();
-            sensorData.CO = request->getParam("co")->value().toFloat();
             sensorData.conn_time = request->getParam("time")->value().toInt();
             sensorData.rssi = request->getParam("rssi")->value().toInt();
             TIME_TO_NEXT_HTTP = request->getParam("next")->value().toInt();
@@ -341,10 +340,15 @@ void printToSerial() {
     Serial.println("EXT_Temperature: " + (String) sensorData.temp_ext + " °C");
     Serial.println("EXT_Pressure: " + (String) sensorData.pressure_ext + " hPa");
     Serial.println("EXT_Humidity: " + (String) sensorData.humidity_ext + " %RH");
+    
     Serial.println("Heat Index: " + (String) heatIndex + "\t" + heatIndexLevel);
-    Serial.println("\nAir tVOC: " + (String) sensorData.TVOC + " ppm\n");
+    Serial.println("\nAir tVOC: " + (String) sensorData.TVOC + " ppm");
+    Serial.println("CO2: " + (String) sensorData.CO2);
+    Serial.println("Air quality: " + (String) sensorData.IAQ);
+    Serial.println("ACCURACY: " + (String) sensorData.accuracy + "\n");
+    
     Serial.println("Connection Time: " + (String) sensorData.conn_time + " millis - RSSI: " + (String)sensorData.rssi);
-    Serial.println("Next sending in: " + (String) TIME_TO_NEXT_HTTP + " s.");
+    Serial.println("Will receive again in: " + (String) TIME_TO_NEXT_HTTP + " s.");
     Serial.println("------------------------------------\n");
 }
 
@@ -355,7 +359,7 @@ void displayToScreen(){
          ledcWrite(screen_pwm_channel, 20);
     else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 7) )
          ledcWrite(screen_pwm_channel, 2);
-    else ledcWrite(screen_pwm_channel, 220);    /* 8:00-20:00 */
+    else ledcWrite(screen_pwm_channel, 200);    /* 8:00-20:00 */
 
     display.fillScreen(TFT_BLACK);
 	display.setTextColor(TFT_WHITE);
@@ -414,10 +418,10 @@ void displayToScreen(){
     //AIR QUALITY
     display.setTextColor(0x94B2);
     display.setCursor(1, display.getCursorY() + 8);
-    display.print( (String)sensorData.TVOC + " ppM " /*+ (String)(int)sensorData.IAQ */+ " CO2: " + (String)(int)sensorData.CO );
+    display.println( "CO2: " + (String)(int)sensorData.CO2 + "  VOC: " + (String)sensorData.TVOC + "  Acc." + (String)sensorData.accuracy );
     //display.setCursor(display.width() - display.textWidth(airQualityIndex), display.getCursorY() );
-    display.setCursor(display.width() - display.textWidth("Acc. 0"), display.getCursorY() );
-    display.println("Acc. " + (String) sensorData.accuracy);
+    //display.setCursor(display.width() - display.textWidth("Quality. 000"), display.getCursorY() );
+    display.println("Quality." + (String)sensorData.IAQ);
 
     //out - Temp
 	display.setCursor(1, display.getCursorY() + 22);    //light Y offset
@@ -496,7 +500,7 @@ void loop() {
     //else data are overwritten
     
     
-    //printToSerial();
+    printToSerial();
     displayToScreen();
 
     delay(TIME_TO_SLEEP*1000UL);

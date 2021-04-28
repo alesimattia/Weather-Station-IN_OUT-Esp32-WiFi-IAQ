@@ -115,29 +115,91 @@ or using a 24bit rgb:
 TFT_eSPI::setTextColor( TFT_eSPI::color565(255,255,255) );
 ```
 ### Fonts
-Included fonts may not be the best suitable basing on the display size or aims so we can include our custom font.  
+Stock included fonts may not be the best suitable basing on the display size or aims so we can include our custom font.  
 I got some nice ones (I definitely HATE serif fonts ones :sweat_smile: ) on this font converter: <http://oleddisplay.squix.ch/#/home>  
 Select: *"Library version: Adafruit GFX font"*  
 
-I also created a [custom header file](./docs/Custom_font.h) which suits my display size.  You only have to copy that in the TFT_eSPI main folder, and include it.
+I also created a [custom header file](./docs/Custom_font.h) which suits my display size.  
+~~You only have to copy that in the TFT_eSPI main folder, and include it.~~  
+You can leave Custom_font.h in project folder, and not in display-library folder.
 > I suggest to NOT USE <code>TFT_eSPI::setTextSize(n);</code>  
 with n>1 as it results in more aliased text displaying.  
 At cost of a bit more memory, generate the font with the correct size.
 
-## Battery measurement
+## Tension measurement
 
-1. *ESP32*  
 Since ADC2 can't be used while the WiFi transceiver is active, the 12-bit resolution of the ***ADC1*** will map the input voltage from 0 to 3.3 Vdc to byte values of 0 to 4,095.  
 Max input voltage on all GPIO can be 3.3V so we have to reduce the 5.1V (Usb chargers output) to an acceptable value.  
 
-    To minimize current draw we add a [voltage divider](https://ohmslawcalculator.com/voltage-divider-calculator) with R1=R2=1M Ohm.  
+To minimize current draw we add a [voltage divider](https://ohmslawcalculator.com/voltage-divider-calculator) with R1=R2=1M Ohm.  
 Thus, the readings are attenuated by a factor of R2/(R1+R2) and because of equal resistors, the resulting ***attenuation*** is 2 &nbsp; &#8594; &nbsp; we multiply the readings by 2.
 
-2. *ESP8266 D1 mini*  
+## Calibration
+This section is vaild for both external and internal ambient-measurement sensors.  
+
+>It's mandatory to uncomment BMPxxx::takeForcedMeasurement both in .h and .cpp to set the sensor in the right [tuning for ambient measurement](https://github.com/letscontrolit/ESPEasy/issues/164#issue-214392141) which makes use of forced measurements and then turn back to sensor-sleep (not ESP sleep).
+
+See the spreadsheet with few samplings of a (cheap) commercially-available weather station.  
+Maybe not the best, but it is a starting point:  [SAMPLINGS](https://drive.google.com/file/d/1PmDlydoCnH4jT72zap-6F4M74jH3NuDs/view?usp=sharing)  
+
+-  Temperature is affected by enclosure and ESP self-heathing in an upward shift.  
+
+- On the other side, humidity relevations are a bit tricky.  
+Since my 'reference' weather station is not so sensitive (it's not even got decimal precision) we see that BME(P)280 has got more measurement excursion thus we're lead to think that its ambient estimations are 'more true'.  
+> We note that in the external sensor the reference measurements are pretty low and not even rose while raining (nor snowing) so we'll never apply correction to the humidity readings.
+
+<br><br>
+
+## External ESP sensor
+**By using a BME680 sensor we can both work by implementing the easy Adafruit library or the more advanced BSEC library**   
+
+In this project I'm taking advantage of BME680 by estimating **air quality** too thus will be used [BSEC for Arduino](https://github.com/BoschSensortec/BSEC-Arduino-library) library.  
+In addition to importing the library, it's mandatory to replace the *arduino builder* [as shown here](https://community.bosch-sensortec.com/t5/MEMS-sensors-forum/Error-compiling-BSEC-on-ESP8266-with-Arduino-IDE/m-p/13595/highlight/true#M3154).
+
+While estimating air-quality two **sample rates** only are allowed:  
+3 seconds (LOW_POWER mode) and 5 minutes (ULTRA_LOW_POWER mode).   
+This "power-mode" is set with:
+<code>BSEC::updateSubscription( sensorList[n] )  <br>
+Pass an array containing the virtual sensors to be enabled on the physical BME.</code>
+
+At the first cycle a prebuilt **configuration file** must be loaded to initialize properly the library:  
+<code>const uint8_t bsec_config_iaq[] = <br>
+{ #include "config/generic_***AA***v_***BBB***s_***CCC***d/bsec_iaq.txt" };</code> 
+
+You must select the appropriate file basing on:
+- (*AA*) Voltage applied: 18 (1.8V) or 33 (3.3V)
+- (*BBB*) Power mode: 3s (LP) or 300s (ULP)
+- (*CCC*) History for the automatic background calibration: 4days or 28days
+
+### Deep-Sleep
+While sleeping the ESP ram is powered off so the BSEC library immediately loses the "current state" of the ambient estimations.  
+
+I implemented a **persistency-mechanism** to retain the sensor state over the sleepings. Data is stored in the EMMC (EEPROM library) and read-back in the wakeup (the setup() method is reiterated).
+
+To make matters worse the BSEC library needs an **absolute timestamp** for being time-aware.  
+A huge 64bit variable zeroed the firs upload only, contains the instantaneous timestamp => we need to store this in the EMMC too. 
+Properly helper-functions are used to read/store/print this 64bit variables.
+
+Hence, the EMMC is configured as shown below:  
+
+|   1 (bytes)  |              139              |         8        |
+|:------------:|:-----------------------------:|:----------------:|
+|        0---0 | 1-------------------------139 | 140----------147 |
+| Control_byte |           BSEC_state          |     Timestamp    |
+
+
+### Wireless Transmission
+This control unit communicates with main weather_station through HTTP GET calls.  
+Measured data are sent in the *querystring* of the get call:  
+
+**Fixed wifi BSSID and Channel dramatically improves connecting speed from about 3500ms to 1050ms**  
+Static IP configuration is useful to avoid DHCP negotiation and achieve the fastest connection with the main station <br>
+
+### Battery measurement
 This board has got just a single analog input pin *'A0'*.  
 An internal voltage divider with 220KOhm and 100KOhm, applied in *A0-ADC* is used to upscale 1.1V maximum ADC voltage to 3.3V.  
 
-    In this case too, we add an external voltage divier to expand the measurable range.
+In this case too, we add an external voltage divier to expand the measurable range.
 
 <img src="./docs/img/voltage_divider_d1Mini.jpg" width="20%" float="left"> &nbsp;&nbsp;&nbsp;
 <img src="./docs/img/voltage_divider.jpg" width="65%" float="left">
@@ -153,27 +215,4 @@ Since map() function is using integer calculations
 
 Will not work. So I implemented a custom voltage-mapping function with lower voltage bound 3.2V (as 0%) and 4.2V (100%) as upper bound.
 
-The weather station will always be plugged to an Usb power suppy, so it is showing voltage only (and not percentage).  
-  
-
-## Calibration
->This section is vaild for both external and internal ambient-measurement sensors.  
-
-See the spreadsheet with few samplings of a (cheap) commercially-available weather station.  
-Maybe not the best, but it is a starting point:  [SAMPLINGS](
-https://drive.google.com/file/d/1PmDlydoCnH4jT72zap-6F4M74jH3NuDs/view?usp=sharing)  
-
--  We note that temperature is affected by enclosure and ESP self-heathing in an upward shift.  
-
-- On the other side, humidity relevations are a bit tricky.  
-Since my 'reference' weather station is not so sensitive (it's not even got decimal precision) we see that BME(P)280 has got more measurement excursion thus we're lead to think that its ambient estimations are 'more true'.  
-> We note that in the external sensor the reference measurements are pretty low and not even rose while raining (nor snowing) so we'll never apply correction to the humidity readings.
-
-<br>
-
-## External ESP sensor
-// Fixed BSSID and Channel dramatically improves connecting speed from about 3500ms to 1050ms 
-
-// Uncomment BMP280::takeForcedMeasurement in .h and .cpp
-
-// Custom_font.h in project folder, not in library folder
+The weather station will always be plugged to an Usb power suppy, so it is showing voltage only (and not percentage).

@@ -4,12 +4,10 @@
 #include <Wire.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <FS.h>
 
 #define ESP8266
 
-const uint32_t TIME_TO_NEXT_SENDING = 60U * 1000000U;
-int64_t timestamp = 1;
+const uint32_t TIME_TO_NEXT_SENDING = 5U * 60U * 1000000U;
 
 const char* ssid = "ESP-WeatherStation";
 const char* password = "esp32station";
@@ -23,17 +21,16 @@ const IPAddress localIP(192, 168, 4, 2),
 float voltage_ext;
 
 Bsec bme;
-const char* backup = "/bsec_config_backup.txt";
-
+int64_t timestamp = 0;
 bsec_virtual_sensor_t sensor_list[14] = {
-	BSEC_OUTPUT_IAQ,
+	//BSEC_OUTPUT_IAQ,
 	BSEC_OUTPUT_STATIC_IAQ,
 	BSEC_OUTPUT_CO2_EQUIVALENT,
 	BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,	//tVOC
-	BSEC_OUTPUT_RAW_TEMPERATURE,
-	BSEC_OUTPUT_RAW_PRESSURE,
-	BSEC_OUTPUT_RAW_HUMIDITY,
-	BSEC_OUTPUT_RAW_GAS,
+	//BSEC_OUTPUT_RAW_TEMPERATURE,
+	//BSEC_OUTPUT_RAW_PRESSURE,
+	//BSEC_OUTPUT_RAW_HUMIDITY,
+	//BSEC_OUTPUT_RAW_GAS,
 	BSEC_OUTPUT_RUN_IN_STATUS,
 	BSEC_OUTPUT_STABILIZATION_STATUS,
 	BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
@@ -41,13 +38,10 @@ bsec_virtual_sensor_t sensor_list[14] = {
 	BSEC_OUTPUT_COMPENSATED_GAS,
 	BSEC_OUTPUT_GAS_PERCENTAGE
 };
-
 uint8_t sensor_state[BSEC_MAX_STATE_BLOB_SIZE] = {0};
-
 const uint8_t bsec_config_iaq[] = {
-	#include "config/generic_33v_3s_4d/bsec_iaq.txt"
+	#include "config/generic_33v_300s_4d/bsec_iaq.txt"
 };
-
 
 
 unsigned long start;
@@ -58,7 +52,8 @@ void setup()
 
 	Serial.begin(115200);
 	Wire.begin();
-	EEPROM.begin( BSEC_MAX_STATE_BLOB_SIZE + 1 + 8 );
+			//control byte(0) - bsec_blob(1-139) - timestamp(140-147)
+	EEPROM.begin( 1 + BSEC_MAX_STATE_BLOB_SIZE + 8);
 
 	pinMode(A0, INPUT);  /** Battery voltage divider input*/
 
@@ -75,14 +70,16 @@ void setup()
 		Serial.print("\nI read this state: ");
 			printState(sensor_state);
 	}
-	else {	// Erase the EEPROM with zeroes
-		Serial.println("Not a valid state -> Erasing EEPROM");
-		for (uint16_t i = 0; i < (BSEC_MAX_STATE_BLOB_SIZE + 1); i++)
+	else {
+		Serial.println("\nNot a valid state -> Erasing EEPROM");
+		for (uint16_t i = 1; i < (1 + BSEC_MAX_STATE_BLOB_SIZE + 8); i++)
 			EEPROM.write(i, 0);
+		EEPROM.write(0, BSEC_MAX_STATE_BLOB_SIZE);  //control byte
+
 		EEPROM.commit();
 	}
 
-	bme.updateSubscription(sensor_list, sizeof(sensor_list)/sizeof(sensor_list[0]), BSEC_SAMPLE_RATE_LP);
+	bme.updateSubscription(sensor_list, sizeof(sensor_list)/sizeof(sensor_list[0]), BSEC_SAMPLE_RATE_ULP);
 
 	if (!checkSensor()){ 
 		Serial.println("\nFailed to init BME680 !!");   
@@ -141,10 +138,10 @@ void sendData()
 		//Serial.println("My Ip: "+ WiFi.localIP().toString() + "RSSI: "+ (String) WiFi.RSSI());
 
 		HTTPClient http;
-		http.begin("http://192.168.4.1/update?temp=" + 
+		http.begin("http://192.168.4.1/update?temp=" +
 				(String)bme.temperature + "&hum=" + (String)bme.humidity + "&pres=" + (String)bme.pressure + 
-				"&tvoc=" + (String)bme.breathVocEquivalent + "&iaq=" + (String)bme.staticIaq + "&accuracy=" + (String) bme.iaqAccuracy + "&co=" + (String)bme.co2Equivalent + 
-				"&volt=" + String(voltage_ext, 3) + "&time=" + (String)conn_time + "&rssi=" + (String)WiFi.RSSI() + "&next=" + (String)(TIME_TO_NEXT_SENDING/1000000U) 
+				"&tvoc=" + (String)bme.breathVocEquivalent + "&iaq=" + (String)bme.staticIaq + "&accuracy=" + (String) bme.iaqAccuracy + "&co2=" + (String)bme.co2Equivalent + 
+				"&volt=" + String(voltage_ext, 3) + "&time=" + (String)conn_time + "&rssi=" + (String)WiFi.RSSI() + "&next=" + (String)(TIME_TO_NEXT_SENDING/1000000UL) 
 		);
 
 		http.GET();	 //Not aware of response, just send.
@@ -179,9 +176,9 @@ void printState(uint8_t sensor_state[] ){
 }
 
 
-void printStamp(uint64_t value)
+void printStamp(int64_t value)
 {
-    const int NUM_DIGITS    = log10(value) + 1;
+    const int NUM_DIGITS = log10(value) + 1;
     char sz[NUM_DIGITS + 1];
     sz[NUM_DIGITS] =  0;
     for ( size_t i = NUM_DIGITS; i--; value /= 10)
@@ -193,9 +190,9 @@ void printStamp(uint64_t value)
 void updateState(void)
 {
 	bme.getState(sensor_state);
-
-	for (uint16_t i = 1; i <= BSEC_MAX_STATE_BLOB_SIZE ; i++)
-		EEPROM.write(i , sensor_state[i]);
+							//
+	for (uint16_t i = 1; i < BSEC_MAX_STATE_BLOB_SIZE + 1 ; i++)
+		EEPROM.write(i , sensor_state[i-1] );
 	EEPROM.write(0, BSEC_MAX_STATE_BLOB_SIZE);
 	EEPROM.commit();
    	EEPROM.end();
@@ -208,19 +205,19 @@ void updateState(void)
 int64_t getTimestamp() 
 {
 	//READ previous state from eeprom
-	int64_t timestamp;
-		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 0) << 56;
-		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 1) << 48;
-		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 2) << 40;
-		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 3) << 32;
-		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 4) << 24;
-		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 5) << 16;
-		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 6) << 8;
-		timestamp += (int64_t)EEPROM.read(BSEC_MAX_STATE_BLOB_SIZE + 1 + 7);
+	timestamp += (int64_t)EEPROM.read( 1 + BSEC_MAX_STATE_BLOB_SIZE ) << 56;
+	timestamp += (int64_t)EEPROM.read( 1 + BSEC_MAX_STATE_BLOB_SIZE + 1) << 48;
+	timestamp += (int64_t)EEPROM.read( 1 + BSEC_MAX_STATE_BLOB_SIZE + 2) << 40;
+	timestamp += (int64_t)EEPROM.read( 1 + BSEC_MAX_STATE_BLOB_SIZE + 3) << 32;
+	timestamp += (int64_t)EEPROM.read( 1 + BSEC_MAX_STATE_BLOB_SIZE + 4) << 24;
+	timestamp += (int64_t)EEPROM.read( 1 + BSEC_MAX_STATE_BLOB_SIZE + 5) << 16;
+	timestamp += (int64_t)EEPROM.read( 1 + BSEC_MAX_STATE_BLOB_SIZE + 6) << 8;
+	timestamp += (int64_t)EEPROM.read( 1 + BSEC_MAX_STATE_BLOB_SIZE + 7);
 
-	timestamp += TIME_TO_NEXT_SENDING;
+	timestamp += (TIME_TO_NEXT_SENDING/1000);
+	//timestamp += (TIME_TO_NEXT_SENDING/1000) - millis();  //Need to subtract the elapsed time??
 
-	//WRITE to eeprom
+	//WRITE new timestamp back to eeprom
 	byte timebuffer[8];
 		timebuffer[0] = timestamp >> 56;
 		timebuffer[1] = timestamp >> 48;
@@ -230,8 +227,8 @@ int64_t getTimestamp()
 		timebuffer[5] = timestamp >> 16;
 		timebuffer[6] = timestamp >> 8;
 		timebuffer[7] = timestamp;
-	for(short i= 0; i< 8; i++)
-		EEPROM.write(BSEC_MAX_STATE_BLOB_SIZE + 1 + i, timebuffer[i]);
+	for(short i= 0; i < 8; i++)
+		EEPROM.write(1 + BSEC_MAX_STATE_BLOB_SIZE + i, timebuffer[i]);
 	EEPROM.commit();
 
 	return timestamp;
@@ -241,7 +238,7 @@ int64_t getTimestamp()
 void loop() 
 {
 	voltage_ext = analogRead(A0) * 3.3F / 1023.0F * 4.37F;   //4.37 offset at full charge
-	int64_t timestamp = getTimestamp();	//uS
+	timestamp = getTimestamp();	//uS
 
 	bme.setState(sensor_state);
 	if( bme.run(timestamp) ){
@@ -254,11 +251,11 @@ void loop()
 		printStamp(bme.nextCall);
 	}
 
-	Serial.print("\nTimestamp: ");
+	Serial.print("\nCurrent timestamp: ");
 	printStamp(timestamp);
 
 	Serial.println("\n----- I took "+ (String)(millis()-start) + " ms. to complete a cycle ----\n");
 	
 	ESP.deepSleep(TIME_TO_NEXT_SENDING, WAKE_RF_DISABLED);
-	delay(1); /*Needed for proper sleeping*/
+	delay(1UL); /*Needed for proper sleeping*/
 }
