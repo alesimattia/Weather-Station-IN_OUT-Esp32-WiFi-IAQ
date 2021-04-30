@@ -99,9 +99,9 @@ String airQualityIndex = airCondition[0];
  * **/
 typedef struct data_struct {
   float voltage_ext = NULL;
-  float temp_ext = NULL;
-  float humidity_ext = NULL;
-  float pressure_ext = NULL;
+  float temp = NULL;
+  float humidity = NULL;
+  float pressure = NULL;
   float TVOC = NULL;    //BSEC_OUTPUT_BREATH_VOC_EQUIVALENT in ppm
   float CO2 = NULL;
   int IAQ = NULL;
@@ -175,9 +175,9 @@ void setup() {
     server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
         if (request->hasParam("volt") && request->hasParam("rssi") )    //no need to check all querystring parameters
         {
-            sensorData.temp_ext = request->getParam("temp")->value().toFloat();
-            sensorData.humidity_ext = request->getParam("hum")->value().toFloat();
-            sensorData.pressure_ext = request->getParam("pres")->value().toFloat() / 100;
+            sensorData.temp = request->getParam("temp")->value().toFloat();
+            sensorData.humidity = request->getParam("hum")->value().toFloat();
+            sensorData.pressure = request->getParam("pres")->value().toFloat() / 100;
             sensorData.voltage_ext = request->getParam("volt")->value().toFloat();
             sensorData.TVOC = request->getParam("tvoc")->value().toFloat();
             sensorData.CO2 = request->getParam("co2")->value().toFloat();
@@ -188,7 +188,7 @@ void setup() {
             TIME_TO_NEXT_HTTP = request->getParam("next")->value().toInt();
 
             vPercent_ext = battPercentage(sensorData.voltage_ext);
-            heatIndex = util.computeHeatIndex(sensorData.temp_ext, sensorData.humidity_ext, false);
+            heatIndex = util.computeHeatIndex(sensorData.temp, sensorData.humidity, false);
             heatIndexLevel = getHeatCondition(heatIndex);
             call_miss = 0;
 
@@ -337,13 +337,13 @@ void printToSerial() {
     Serial.println();
     /*--------------------------------------------------------------------------------*/
     Serial.println("EXT_Voltage: " + String( sensorData.voltage_ext,3 ) + " V\t" + (String) vPercent_ext + "%");
-    Serial.println("EXT_Temperature: " + (String) sensorData.temp_ext + " °C");
-    Serial.println("EXT_Pressure: " + (String) sensorData.pressure_ext + " hPa");
-    Serial.println("EXT_Humidity: " + (String) sensorData.humidity_ext + " %RH");
+    Serial.println("EXT_Temperature: " + (String) sensorData.temp + " °C");
+    Serial.println("EXT_Pressure: " + (String) sensorData.pressure + " hPa");
+    Serial.println("EXT_Humidity: " + (String) sensorData.humidity + " %RH");
     
     Serial.println("Heat Index: " + (String) heatIndex + "\t" + heatIndexLevel);
     Serial.println("\nAir tVOC: " + (String) sensorData.TVOC + " ppm");
-    Serial.println("CO2: " + (String) sensorData.CO2);
+    Serial.println("CO2: " + (String) sensorData.CO2 + " ppm");
     Serial.println("Air quality: " + (String) sensorData.IAQ);
     Serial.println("ACCURACY: " + (String) sensorData.accuracy + "\n");
     
@@ -355,11 +355,11 @@ void printToSerial() {
 
 void displayToScreen(){ 
     /*---------------------------------------- BRIGHTNESS -------------------------------*/
-    if(currentTime.hour() >= 21 && currentTime.hour() < 23)     
+    if( (currentTime.hour() >= 21 && currentTime.hour() < 23) || (currentTime.hour() >=7 && currentTime.hour() <8) )     
          ledcWrite(screen_pwm_channel, 20);
-    else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 7) )
+    else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 6) )
          ledcWrite(screen_pwm_channel, 2);
-    else ledcWrite(screen_pwm_channel, 200);    /* 8:00-20:00 */
+    else ledcWrite(screen_pwm_channel, 205);    /* 8:00-20:00 */
 
     display.fillScreen(TFT_BLACK);
 	display.setTextColor(TFT_WHITE);
@@ -399,7 +399,7 @@ void displayToScreen(){
     display.setFreeFont(&URW_Gothic_L_Book_28);
     display.setCursor( icon_w + 38, display.getCursorY() + 41);
 	display.setTextColor(0xAE3F);
-    display.print( (String)(int)sensorData.pressure_ext + " hPa");
+    display.print( (String)(int)sensorData.pressure + " hPa");
 
     //SIGNAL STRENGTH (ext-sensor)
     display.setCursor( display.width() - display.textWidth( (String)sensorData.rssi +"dBi"), display.getCursorY() );
@@ -418,7 +418,7 @@ void displayToScreen(){
     //AIR QUALITY
     display.setTextColor(0x94B2);
     display.setCursor(1, display.getCursorY() + 8);
-    display.println( "CO2: " + (String)(int)sensorData.CO2 + "  VOC: " + (String)sensorData.TVOC + "  Acc." + (String)sensorData.accuracy );
+    display.println( "CO2: " + (String)(int)sensorData.CO2 + "  VOC: " + (String)(int)sensorData.TVOC + "  Acc." + (String)sensorData.accuracy );
     //display.setCursor(display.width() - display.textWidth(airQualityIndex), display.getCursorY() );
     //display.setCursor(display.width() - display.textWidth("Quality. 000"), display.getCursorY() );
     display.println("Quality." + (String)sensorData.IAQ);
@@ -427,7 +427,7 @@ void displayToScreen(){
 	display.setCursor(1, display.getCursorY() + 22);    //light Y offset
 	display.setTextColor(0xF9E7);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-	display.print(sensorData.temp_ext, 1);
+	display.print(sensorData.temp, 1);
 	display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.print(" 'C");
     //in
@@ -441,7 +441,7 @@ void displayToScreen(){
 	display.setCursor(1, display.getCursorY() + 5);
 	display.setTextColor(0x3B7F);
 	display.setFreeFont(&URW_Gothic_L_Book_41);
-	display.print(sensorData.humidity_ext, 1);
+	display.print(sensorData.humidity, 1);
 	display.setFreeFont(&URW_Gothic_L_Book_28);
 	display.print(" %rH");
     //in

@@ -23,14 +23,14 @@ float voltage_ext;
 Bsec bme;
 int64_t timestamp = 0;
 bsec_virtual_sensor_t sensor_list[14] = {
-	//BSEC_OUTPUT_IAQ,
+	BSEC_OUTPUT_IAQ,
 	BSEC_OUTPUT_STATIC_IAQ,
 	BSEC_OUTPUT_CO2_EQUIVALENT,
 	BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,	//tVOC
-	//BSEC_OUTPUT_RAW_TEMPERATURE,
-	//BSEC_OUTPUT_RAW_PRESSURE,
-	//BSEC_OUTPUT_RAW_HUMIDITY,
-	//BSEC_OUTPUT_RAW_GAS,
+	BSEC_OUTPUT_RAW_TEMPERATURE,
+	BSEC_OUTPUT_RAW_PRESSURE,
+	BSEC_OUTPUT_RAW_HUMIDITY,
+	BSEC_OUTPUT_RAW_GAS,
 	BSEC_OUTPUT_RUN_IN_STATUS,
 	BSEC_OUTPUT_STABILIZATION_STATUS,
 	BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
@@ -140,7 +140,7 @@ void sendData()
 		HTTPClient http;
 		http.begin("http://192.168.4.1/update?temp=" +
 				(String)bme.temperature + "&hum=" + (String)bme.humidity + "&pres=" + (String)bme.pressure + 
-				"&tvoc=" + (String)bme.breathVocEquivalent + "&iaq=" + (String)bme.staticIaq + "&accuracy=" + (String) bme.iaqAccuracy + "&co2=" + (String)bme.co2Equivalent + 
+				"&tvoc=" + (String)bme.breathVocEquivalent + "&iaq=" + (String)bme.staticIaq + "&accuracy=" + (String)bme.iaqAccuracy + "&co2=" + (String)bme.co2Equivalent + 
 				"&volt=" + String(voltage_ext, 3) + "&time=" + (String)conn_time + "&rssi=" + (String)WiFi.RSSI() + "&next=" + (String)(TIME_TO_NEXT_SENDING/1000000UL) 
 		);
 
@@ -157,10 +157,11 @@ void printToSerial() {
 	Serial.print(voltage_ext, 4);
 	Serial.println("V");
 
-	Serial.println("\nACCURACY: " + (String)bme.iaqAccuracy + "\nStatic-IAQ: " + (String)bme.staticIaq 
-			+ "\nCO2: " + (String)bme.co2Equivalent + " ppM" + "\ntVOC: " + (String)bme.breathVocEquivalent + " ppM" );	
-	Serial.println("\nResistance: " + (String)bme.gasResistance + "\nRun in status: " + (String)bme.runInStatus + "\nComp gas value: " + (String)bme.compGasValue + 
-				"\nGas percentage: " + (String)bme.gasPercentage + "\nGas accuracy: " + (String)bme.compGasAccuracy );
+	Serial.println("\nRun in status: " + (String)bme.runInStatus + "\nIAQ-ACCURACY: " + (String)bme.iaqAccuracy + "\nStatic-IAQ-ACCURACY: " + (String)bme.staticIaqAccuracy 
+			+ "\nGas-ACCURACY: " + (String)bme.compGasAccuracy  + "\nGas%-ACCURACY: " + (String)bme.gasPercentageAcccuracy + "\ntVOC-ACCURACY: " + (String)bme.breathVocAccuracy );	
+	Serial.println("\nResistance: " + (String)bme.gasResistance + "\nStatic-IAQ: " + (String)bme.staticIaq + "\nCO2: " + (String)bme.co2Equivalent + " ppM" 
+			+ "\ntVOC: " + (String)bme.breathVocEquivalent + " ppM" + "\nComp gas value: " + (String)bme.compGasValue + "\nGas percentage: " + (String)bme.gasPercentage );
+	
 	Serial.println("\nTemp: " + (String)bme.temperature + " 'C" + "\nHumidity: " + (String)bme.humidity + " %RH"
 			+ "\nPressure: " + (String)(bme.pressure/100) + " hPa" );
 	
@@ -250,11 +251,12 @@ void loop()
 		Serial.print("Next sensor call: ");
 		printStamp(bme.nextCall);
 	}
+	else Serial.println("\nNo new data to process");
 
 	Serial.print("\nCurrent timestamp: ");
 	printStamp(timestamp);
 
-	Serial.println("\n----- I took "+ (String)(millis()-start) + " ms. to complete a cycle ----\n");
+	Serial.println("\n---- I took "+ (String)(millis()-start) + " ms. to complete a cycle ----\n");
 	
 	ESP.deepSleep(TIME_TO_NEXT_SENDING, WAKE_RF_DISABLED);
 	delay(1UL); /*Needed for proper sleeping*/
