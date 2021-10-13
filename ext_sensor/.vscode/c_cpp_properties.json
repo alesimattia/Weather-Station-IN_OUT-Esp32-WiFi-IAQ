@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "name": "Arduino_WIN",
+            "includePath": [
+                "C:\\Users\\mattia_alesi\\AppData\\Local\\Arduino15\\**",
+                "C:\\Users\\mattia_alesi\\Documents\\Arduino\\libraries\\**",
+                "${workspaceFolder}/**",
+                "C:\\Users\\mattia_alesi\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\3.0.2\\**",
+                "C:\\Users\\mattia_alesi\\AppData\\Local\\Arduino15\\packages\\esp8266\\tools\\**"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64",
+            "forcedInclude": []
+        }
+    ],
+    "version": 4
+}

@@ -1,0 +1,6 @@
+{
+    "sketch": "ext_sensor.ino",
+    "board": "esp8266:esp8266:d1_mini_clone",
+    "configuration": "xtal=80,vt=flash,exception=disabled,stacksmash=disabled,ssl=basic,mmu=3232,non32xfer=fast,FlashMode=qio,FlashFreq=80,eesz=4M3M,ip=lm2n,dbg=Disabled,lvl=None____,wipe=all,baud=256000",
+    "output": "../vscodeOutput"
+}

@@ -126,7 +126,7 @@ You can leave Custom_font.h in project folder, and not in display-library folder
 with n>1 as it results in more aliased text displaying.  
 At cost of a bit more memory, generate the font with the correct size.
 
-## Tension measurement
+## Voltage measurement
 
 Since ADC2 can't be used while the WiFi transceiver is active, the 12-bit resolution of the ***ADC1*** will map the input voltage from 0 to 3.3 Vdc to byte values of 0 to 4,095.  
 Max input voltage on all GPIO can be 3.3V so we have to reduce the 5.1V (Usb chargers output) to an acceptable value.  
@@ -148,20 +148,32 @@ Maybe not the best, but it is a starting point:  [SAMPLINGS](https://drive.googl
 Since my 'reference' weather station is not so sensitive (it's not even got decimal precision) we see that BME(P)280 has got more measurement excursion thus we're lead to think that its ambient estimations are 'more true'.  
 > We note that in the external sensor the reference measurements are pretty low and not even rose while raining (nor snowing) so we'll never apply correction to the humidity readings.
 
-<br><br>
+<br>
 
 ## External ESP sensor
 **By using a BME680 sensor we can both work by implementing the easy Adafruit library or the more advanced BSEC library**   
 
-In this project I'm taking advantage of BME680 by estimating **air quality** too thus will be used [BSEC for Arduino](https://github.com/BoschSensortec/BSEC-Arduino-library) library.  
-In addition to importing the library, it's mandatory to replace the *arduino builder* [as shown here](https://community.bosch-sensortec.com/t5/MEMS-sensors-forum/Error-compiling-BSEC-on-ESP8266-with-Arduino-IDE/m-p/13595/highlight/true#M3154).
+In this project I'm taking advantage of BME680 by estimating **air quality** too, will be used thus the [BSEC **for Arduino**](https://github.com/BoschSensortec/BSEC-Arduino-library) library.  
+  
+### Prerequisites 
 
-While estimating air-quality two **sample rates** only are allowed:  
-3 seconds (LOW_POWER mode) and 5 minutes (ULTRA_LOW_POWER mode).   
+In addition to importing the library, it's mandatory to edit the configuration &nbsp;<i>platform.txt</i>&nbsp; located in:
+
+```
+%LocalAppData%\Arduino15\packages\esp8266\hardware\esp8266\**\platform.txt 
+```
+as reported in the [official repository documentation](https://github.com/BoschSensortec/BSEC-Arduino-library#3-modify-the-platformtxt-file)
+
+In the past, this procedure was barely descripted in [this Bosh forum](https://community.bosch-sensortec.com/t5/MEMS-sensors-forum/Error-compiling-BSEC-on-ESP8266-with-Arduino-IDE/m-p/13595/highlight/true#M3154).  
+  
+### Configuration
+While estimating air-quality **two sample rates only** are allowed:  
+3 seconds (LOW_POWER mode) and 5 minutes (ULTRA_LOW_POWER mode).  
+
 This "power-mode" is set with:
 <code>BSEC::updateSubscription( sensorList[n] )  <br>
-Pass an array containing the virtual sensors to be enabled on the physical BME.</code>
-
+Pass an array containing the virtual sensors to be enabled on the physical BME.</code>  
+<br>
 At the first cycle a prebuilt **configuration file** must be loaded to initialize properly the library:  
 <code>const uint8_t bsec_config_iaq[] = <br>
 { #include "config/generic_***AA***v_***BBB***s_***CCC***d/bsec_iaq.txt" };</code> 
@@ -170,7 +182,8 @@ You must select the appropriate file basing on:
 - (*AA*) Voltage applied: 18 (1.8V) or 33 (3.3V)
 - (*BBB*) Power mode: 3s (LP) or 300s (ULP)
 - (*CCC*) History for the automatic background calibration: 4days or 28days
-
+<br>   
+  
 ### Deep-Sleep
 While sleeping the ESP ram is powered off so the BSEC library immediately loses the "current state" of the ambient estimations.  
 
@@ -184,7 +197,7 @@ Hence, the EMMC is configured as shown below:
 
 |   1 (bytes)  |              139              |         8        |
 |:------------:|:-----------------------------:|:----------------:|
-|        0---0 | 1-------------------------139 | 140----------147 |
+|     0--0     |  1-----------------------139  |  140--------147  |
 | Control_byte |           BSEC_state          |     Timestamp    |
 
 
@@ -215,4 +228,4 @@ Since map() function is using integer calculations
 
 Will not work. So I implemented a custom voltage-mapping function with lower voltage bound 3.2V (as 0%) and 4.2V (100%) as upper bound.
 
-The weather station will always be plugged to an Usb power suppy, so it is showing voltage only (and not percentage).
+The main weather-station will always be plugged to an Usb power suppy, so it is showing voltage only (and not percentage).

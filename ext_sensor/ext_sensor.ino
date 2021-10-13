@@ -138,7 +138,8 @@ void sendData()
 		//Serial.println("My Ip: "+ WiFi.localIP().toString() + "RSSI: "+ (String) WiFi.RSSI());
 
 		HTTPClient http;
-		http.begin("http://192.168.4.1/update?temp=" +
+		WiFiClient wifiClient;
+		http.begin(wifiClient, "http://192.168.4.1/update?temp=" +
 				(String)bme.temperature + "&hum=" + (String)bme.humidity + "&pres=" + (String)bme.pressure + 
 				"&tvoc=" + (String)bme.breathVocEquivalent + "&iaq=" + (String)bme.staticIaq + "&accuracy=" + (String)bme.iaqAccuracy + "&co2=" + (String)bme.co2Equivalent + 
 				"&volt=" + String(voltage_ext, 3) + "&time=" + (String)conn_time + "&rssi=" + (String)WiFi.RSSI() + "&next=" + (String)(TIME_TO_NEXT_SENDING/1000000UL) 

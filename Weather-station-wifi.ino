@@ -1,13 +1,11 @@
+#define ESP32
 #include <TFT_eSPI.h>
-#include <User_Setup.h>
+#include <User_Setup_Select.h>
 #include "Custom_font.h"
 
-#include <Wire.h>
-
-#include <RTClib.h>
-#include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_HDC1000.h>
+#include <RTClib.h>
 #include <DHT.h>    //heat-index
 
 #include <WiFi.h>
@@ -18,21 +16,20 @@
 #include "Connect.h"    //Weather api parameters
 #include "Weather_icons.h"
 
-#define ESP32
 
 
 /*-------------------- Sensori ------------------*/
 RTC_DS3231 rtc;
 Adafruit_BMP280 bmp = Adafruit_BMP280();
 Adafruit_HDC1000 hdc = Adafruit_HDC1000();
-DHT util = DHT(NULL,DHT22); //just for heat-index
+DHT util = DHT(33,DHT22); //just for heat-index
 
-const byte batt_in = 34U;
+const short batt_in = 34;
 
 
 /*-------------------------------------------- Variabili globali ----------------------------------------*/
-const unsigned long TIME_TO_SLEEP = 30;
-unsigned short TIME_TO_NEXT_HTTP = 60;  //Seconds - sent and overriden by ext_sensor
+const unsigned short TIME_TO_SLEEP = 30;
+unsigned short TIME_TO_NEXT_HTTP = 60;  //Seconds - sent and overriden in the first "ext_sensor" device connection
 unsigned short call_miss = 0;    /** After 2 ext_sensor CYCLE data missing, writes 0 on the struct*/
 
 /*---------------- Access point -------------------*/
@@ -45,7 +42,8 @@ AsyncWebServer server(80);
 WiFiClient client;
 HTTPClient http;
 
-/*---------------- Internet connection ----------------*/
+/*-------------------- Internet connection ----------------------*/
+
 /** Stored in a private  Connect.h file 
 const byte lan_bssid[] = {0xFF, , , };
 const char* lan_password = "";
@@ -53,17 +51,16 @@ const String API_KEY;
 */
 const char* lan_ssid = "d-Link";
 IPAddress lan_ip(192, 168, 1, 200),
-        lan_gateway(192, 168, 1, 1),
-        lan_subnet(255, 255, 255, 0),
-        dns_resolver(192, 168, 1, 1);
+          lan_gateway(192, 168, 1, 1),
+          lan_subnet(255, 255, 255, 0),
+          dns_resolver(192, 168, 1, 1);
 
 const String lat = "42.826", lon = "13.691";
 const String exlude = "current,daily,minutely,alerts";
-const String queryString = "http://api.openweathermap.org/data/2.5/onecall?lat=" + 
-                    lat + "&lon=" + lon + "&exclude="+ exlude +"&units=metric&lang=it&appid="+ API_KEY;
+const String queryString = "http://api.openweathermap.org/data/2.5/onecall?lat=" + lat + "&lon=" + lon + "&exclude="+ exlude +"&units=metric&lang=it&appid=" + API_KEY;
 
 
-const char daysOfTheWeek[7][12] = {
+const char daysOfTheWeek[7][11] = {
     "Domenica",
     "Lunedi'",
     "Martedi'",
@@ -74,43 +71,39 @@ const char daysOfTheWeek[7][12] = {
 };
 DateTime currentTime;
 
-const char heatCondition[6][15] = {"Good", "Caution", "High-Caution", "Danger"};
-const char airCondition[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
+const char heatConditions[6][13] = {"Good", "Caution", "High-Caution", "Danger"};
+const char airConditions[6][11] = {"Healthy", "Acceptable", "Not-Good", "Bad", "Danger", "Extreme"}; 
 String forecast = "Sun";
 
-
-/*---------------- Display pinout ----------------*/
-const uint8_t screen_pwm_channel = 0, 
-            screen_led = 16,
-            screen_reset = 17,  
-            screen_DC = 4;    //Data Command pin
-TFT_eSPI display = TFT_eSPI();
-
-
 /*----------------- Environment data  ----------------*/
-float voltage, temp, humidity, pressure, heatIndex;;
-int vPercent, vPercent_ext = NULL;
+float voltage, temp, humidity, pressure, heatIndex;
+int vPercent, vPercent_ext = 0;
 
-String heatIndexLevel ="";
-String airQualityIndex = airCondition[0];
+String heatIndexLevel = "";
+String airQualityLevel = airConditions[0];
 
 /**  External sensor data may not be 
- *   available --> initialised to NULL
+ *   available --> initialised to 0
  * **/
 typedef struct data_struct {
-  float voltage_ext = NULL;
-  float temp = NULL;
-  float humidity = NULL;
-  float pressure = NULL;
-  float TVOC = NULL;    //BSEC_OUTPUT_BREATH_VOC_EQUIVALENT in ppm
-  float CO2 = NULL;
-  int IAQ = NULL;
-  int accuracy = NULL;
-  int rssi = NULL;
-  int conn_time = NULL;
+  float voltage_ext = 0.0F;
+  float temp = 0.0F;
+  float humidity = 0.0F;
+  float pressure = 0.0F;
+  float TVOC = 0.0F;    //BSEC_OUTPUT_BREATH_VOC_EQUIVALENT in ppm
+  float CO2 = 0.0F;
+  int IAQ = 0;
+  int accuracy = 0;
+  int rssi = 0;
+  int conn_time = 0;
 } data_struct;
 data_struct sensorData;
 
+
+/*---------------- Additional Display pinout ----------------*/
+const uint8_t screen_pwm_channel = 0, 
+              screen_led = 16;
+TFT_eSPI display = TFT_eSPI();
 
 
 
@@ -126,12 +119,10 @@ void setup() {
     
     /*--------------------- Sensor initializing ----------------------*/
     if ( !rtc.begin() ) Serial.println("Couldn't find RTC");
-    rtc.disable32K();   
-    if( rtc.lostPower() )
-        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    rtc.disable32K();
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
 
-    bmp.reset();
     if (!bmp.begin(0x76))   Serial.println("Couldn't find BMP");
     delay(2);   /** Start-up time*/
     
@@ -143,7 +134,7 @@ void setup() {
     
 
     if(! hdc.begin(0x40))     Serial.println("Couldn't find HDC");
-    //hdc.drySensor();		/** Blocking => wasting time, disabled while not in production */
+    //hdc.drySensor();		/** Blocking => time-wasting, disabled while not in production */
 
 
     /*-----------------------  Display ---------------------------------*/
@@ -157,9 +148,6 @@ void setup() {
     
 
     /*---------------------------- Web server - Access Point -------------------------*/
-    while( !WiFi.mode(WIFI_AP) )
-        Serial.println("Wifi radio not ready");
-
     if(! WiFi.config(localIP, gateway, subnetM) )
       Serial.println("AP Failed to configure IP");
 
@@ -167,10 +155,10 @@ void setup() {
     if(! WiFi.setTxPower(WIFI_POWER_19_5dBm) )
         Serial.println("Can't set Wifi Power mode");
 
-    while(! WiFi.softAP(ap_ssid, ap_password, 1, 0, 2) )    //Channel 1 - 2412MHz
+    while(! WiFi.softAP(ap_ssid, ap_password, 1, 0, 1) )    //Channel 1 - 2412MHz
         Serial.println("Acccess Point not ready");
 
-    //Serial.println("\nAccess Point IP: " + WiFi.softAPIP().toString() + " Bap_ssid: "+WiFi.macAddress());
+    //Serial.println("\nAccess Point IP: " + WiFi.softAPIP().toString() + " MAC: "+WiFi.macAddress());
 
     server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
         if (request->hasParam("volt") && request->hasParam("rssi") )    //no need to check all querystring parameters
@@ -192,16 +180,17 @@ void setup() {
             heatIndexLevel = getHeatCondition(heatIndex);
             call_miss = 0;
 
-            request->send(200, "text/plain", (String)TIME_TO_NEXT_HTTP );
+            request->send(200); //Client not response-aware
             Serial.println("Answered to a client\n");
         }
         else{ 
-            Serial.println("Bad URL request");
             request->send(400, "text/plain", "Bad URL request");
+            Serial.println("Bad URL request");
         }
     });
     server.begin();
 }
+
 
 
 int battPercentage(float v) 
@@ -242,13 +231,13 @@ void ambientMeasurement()
 
 String getHeatCondition(float heatIndex)
 {
-    if(heatIndex < 26)   heatIndexLevel = heatCondition[0];
+    if(heatIndex < 26)   heatIndexLevel = heatConditions[0];
     else if (heatIndex >= 26 && heatIndex <= 32)
-        heatIndexLevel = heatCondition[1];
+        heatIndexLevel = heatConditions[1];
     else if(heatIndex > 32 && heatIndex <= 41)
-        heatIndexLevel = heatCondition[2];
+        heatIndexLevel = heatConditions[2];
     else if(heatIndex > 41 && heatIndex <= 54)
-        heatIndexLevel = heatCondition[3];
+        heatIndexLevel = heatConditions[3];
     else    heatIndexLevel = "";
 
     return heatIndexLevel;
@@ -296,7 +285,7 @@ void getForecast()
     else Serial.println("Not connected to a network");
 
     
-    /** Back to HTTP listener */
+    // Back to HTTP listener
     WiFi.disconnect(false, true);
     while(! WiFi.softAP(ap_ssid, ap_password, 1, 0, 2) )    //Channel 1 - 2412MHz
         Serial.println("Acccess Point not ready");
@@ -306,11 +295,11 @@ void getForecast()
 void parseJsonAnswer(String payload){
     //Serial.println("\nn I'm going to parse: \n" + payload + "\n\n");
 
-    /**Use this calculator https://arduinojson.org/v6/assistant/ */
+    // Use this calculator https://arduinojson.org/v6/assistant/
     DynamicJsonDocument doc(24576); //bytes
     deserializeJson(doc, payload);
     
-                        /**Two hours next*/
+                        //Two hours next
     forecast = doc["hourly"][2]["weather"][0]["main"].as<String>();
     Serial.println("I parsed this forecast: "+ forecast);
 
@@ -347,7 +336,7 @@ void printToSerial() {
     Serial.println("Air quality: " + (String) sensorData.IAQ);
     Serial.println("ACCURACY: " + (String) sensorData.accuracy + "\n");
     
-    Serial.println("Connection Time: " + (String) sensorData.conn_time + " millis - RSSI: " + (String)sensorData.rssi);
+    Serial.println("Connection Time: " + (String) sensorData.conn_time + " millis - RSSI: " + (String)sensorData.rssi + " dBi");
     Serial.println("Will receive again in: " + (String) TIME_TO_NEXT_HTTP + " s.");
     Serial.println("------------------------------------\n");
 }
@@ -359,11 +348,11 @@ void displayToScreen(){
          ledcWrite(screen_pwm_channel, 20);
     else if(currentTime.hour() >= 23 || (currentTime.hour() >= 0 && currentTime.hour() <= 6) )
          ledcWrite(screen_pwm_channel, 2);
-    else ledcWrite(screen_pwm_channel, 205);    /* 8:00-20:00 */
+    else ledcWrite(screen_pwm_channel, 205);    /* 8:00-20:00  full brightness*/
+
 
     display.fillScreen(TFT_BLACK);
 	display.setTextColor(TFT_WHITE);
-
 
 	//DATE
 	display.setFreeFont(&URW_Gothic_L_Book_41);
@@ -418,10 +407,7 @@ void displayToScreen(){
     //AIR QUALITY
     display.setTextColor(0x94B2);
     display.setCursor(1, display.getCursorY() + 8);
-    display.println( "CO2: " + (String)(int)sensorData.CO2 + "  VOC: " + (String)(int)sensorData.TVOC + "  Acc." + (String)sensorData.accuracy );
-    //display.setCursor(display.width() - display.textWidth(airQualityIndex), display.getCursorY() );
-    //display.setCursor(display.width() - display.textWidth("Quality. 000"), display.getCursorY() );
-    display.println("Quality." + (String)sensorData.IAQ);
+    display.println( "CO2: " + (String)(int)sensorData.CO2 + "  VOC: " + (String)(int)sensorData.TVOC + "  Q." + (String)sensorData.IAQ + "   A." + (String)sensorData.accuracy );
 
     //out - Temp
 	display.setCursor(1, display.getCursorY() + 22);    //light Y offset
@@ -475,8 +461,9 @@ void clearData(){
     vPercent_ext = 0;   
     heatIndex = 0;
     call_miss = 0;    /** No need to always clear the struct */
-    Serial.println("No ext_sensor found");
+    Serial.println("No ext_sensor found -> cleared struct");
 }
+
 
 
 
@@ -503,5 +490,5 @@ void loop() {
     printToSerial();
     displayToScreen();
 
-    delay(TIME_TO_SLEEP*1000UL);
+    delay(TIME_TO_SLEEP*1000U);
 }
