@@ -6,7 +6,7 @@
 #include <Adafruit_BMP280.h>
 #include <Adafruit_HDC1000.h>
 #include <RTClib.h>
-#include <DHT.h>    //heat-index
+#include <DHTesp.h>    //heat-index
 
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -22,7 +22,7 @@
 RTC_DS3231 rtc;
 Adafruit_BMP280 bmp = Adafruit_BMP280();
 Adafruit_HDC1000 hdc = Adafruit_HDC1000();
-DHT util = DHT(33,DHT22); //just for heat-index
+DHTesp util;  //just for heat-index
 
 const short batt_in = 34;
 
@@ -122,7 +122,8 @@ void setup() {
     rtc.disable32K();
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
-
+    util.setup(33, DHTesp::DHT22);
+    
     if (!bmp.begin(0x76))   Serial.println("Couldn't find BMP");
     delay(2);   /** Start-up time*/
     
